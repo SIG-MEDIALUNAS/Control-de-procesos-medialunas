@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot } from "firebase/firestore";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔥 FIREBASE CONFIG — reemplazá estos valores con los de tu proyecto Firebase
