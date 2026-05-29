@@ -1203,6 +1203,7 @@ export default function ChecklistMedialunas() {
 
   const now = new Date();
   const defaultLabel = `${MESES[now.getMonth()]} ${now.getFullYear()}`;
+  const defaultMonthId = monthDocId(defaultLabel);
 
   const [month, setMonth] = useState<Month>(() => emptyMonth(defaultLabel));
   const [saveTimer, setSaveTimer] = useState<NodeJS.Timeout | null>(null);
@@ -1216,6 +1217,7 @@ export default function ChecklistMedialunas() {
     const mesesRef = ref(realtimeDb, "meses");
     const unsub = onValue(mesesRef, (snapshot) => {
       const data = snapshot.val();
+      console.log("[v0] Firebase data received:", data);
       if (data) {
         const list = Object.keys(data).map((id) => ({
           id,
@@ -1224,12 +1226,30 @@ export default function ChecklistMedialunas() {
         list.sort((a, b) => a.id.localeCompare(b.id));
         setMonthList(list);
       } else {
+        console.log("[v0] No data in Firebase");
         setMonthList([]);
       }
       setLoading(false);
     });
     return () => unsub();
   }, []);
+
+  // ── Auto-select month when list loads ──
+  useEffect(() => {
+    if (activeMonthId) return; // Already have a selection
+    if (monthList.length === 0) return; // No months yet
+    
+    // Try to find current month first
+    const found = monthList.find((m) => m.id === defaultMonthId);
+    if (found) {
+      console.log("[v0] Auto-selecting current month:", found.id);
+      setActiveMonthId(found.id);
+    } else {
+      // Select the last (most recent) month
+      console.log("[v0] Auto-selecting most recent month:", monthList[monthList.length - 1].id);
+      setActiveMonthId(monthList[monthList.length - 1].id);
+    }
+  }, [monthList, activeMonthId, defaultMonthId]);
 
   // ── Firebase Realtime Database: load active month ──
   useEffect(() => {
@@ -1239,10 +1259,13 @@ export default function ChecklistMedialunas() {
     }
     setLoading(true);
     const monthRef = ref(realtimeDb, `meses/${activeMonthId}`);
+    console.log("[v0] Loading month:", activeMonthId);
     get(monthRef)
       .then((snapshot) => {
+        console.log("[v0] Month snapshot exists:", snapshot.exists());
         if (snapshot.exists()) {
           const data = snapshot.val();
+          console.log("[v0] Month data:", data);
           const base = emptyMonth((data.label as string) || activeMonthId);
           if (data.weeks) {
             base.weeks = (data.weeks as Week[]).map((w, wi) => ({
@@ -1256,12 +1279,16 @@ export default function ChecklistMedialunas() {
           }
           setMonth(base);
         } else {
+          console.log("[v0] Month not found, creating new");
           const m = emptyMonth(activeMonthId.replace(/_/g, " "));
           setMonth(m);
         }
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((err) => {
+        console.error("[v0] Error loading month:", err);
+        setLoading(false);
+      });
   }, [activeMonthId]);
 
   // ── Firebase Realtime Database: debounced auto-save ──
@@ -1270,12 +1297,24 @@ export default function ChecklistMedialunas() {
     setSaveStatus("saving");
     try {
       const id = monthDocId(m.label);
+      console.log("[v0] Saving to Firebase:", id, m);
       const monthRef = ref(realtimeDb, `meses/${id}`);
-      await set(monthRef, JSON.parse(JSON.stringify(m)));
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Timeout: Firebase no responde. Verifica la URL de la base de datos y las reglas de seguridad.")), 10000)
+      );
+      
+      await Promise.race([
+        set(monthRef, JSON.parse(JSON.stringify(m))),
+        timeoutPromise
+      ]);
+      
+      console.log("[v0] Save successful");
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2500);
     } catch (e) {
-      console.error(e);
+      console.error("[v0] Save error:", e);
       setSaveStatus("error");
     }
   }, []);

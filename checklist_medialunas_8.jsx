@@ -9,7 +9,7 @@ import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot } fr
 const firebaseConfig = {
   apiKey: "AIzaSyBE3wpFexU7e8b_Y8jyxs4RqpXRUKzFdy8",
   authDomain: "sig-medialunas.firebaseapp.com",
-  databaseURL: "https://sig-medialunas-default-rtdb.firebaseio.com",
+  databaseURL: "https://v0-sig-medialunas.vercel.app/",
   projectId: "sig-medialunas",
   storageBucket: "sig-medialunas.firebasestorage.app",
   messagingSenderId: "90996874020",
