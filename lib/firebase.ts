@@ -1,5 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -13,12 +14,18 @@ const firebaseConfig = {
 
 // Initialize Firebase only if not already initialized
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+
+// Firestore (legacy support)
 const db = getFirestore(app);
+
+// Realtime Database
+const realtimeDb = getDatabase(app);
 
 // Check if Firebase is properly configured
 const firebaseOk = Boolean(
   firebaseConfig.apiKey && 
-  firebaseConfig.projectId
+  firebaseConfig.projectId &&
+  firebaseConfig.databaseURL
 );
 
-export { app, db, firebaseOk };
+export { app, db, realtimeDb, firebaseOk };

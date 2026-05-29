@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { doc, setDoc, getDoc, collection, onSnapshot } from "firebase/firestore";
-import { db, firebaseOk } from "@/lib/firebase";
+import { ref, set, get, onValue, child } from "firebase/database";
+import { realtimeDb, firebaseOk } from "@/lib/firebase";
 
 // ─── DATA ─────────────────────────────────────────────────────────────────────
 interface Field {
@@ -425,7 +425,7 @@ const S = {
 function SaveBadge({ status }: { status: string }) {
   const cfg: Record<string, { bg: string; color: string; text: string }> = {
     saving: { bg: "#FAEEDA", color: "#633806", text: "Guardando..." },
-    saved: { bg: "#E1F5EE", color: "#085041", text: "Guardado en Firebase" },
+    saved: { bg: "#E1F5EE", color: "#085041", text: "Guardado en Realtime Database" },
     error: { bg: "#FCEBEB", color: "#A32D2D", text: "Error al guardar - datos en local" },
     local: { bg: "#f1f5f9", color: "#64748b", text: "Modo local (sin Firebase)" },
     idle: { bg: "#f1f5f9", color: "#94a3b8", text: "Sin cambios" },
@@ -1207,33 +1207,42 @@ export default function ChecklistMedialunas() {
   const [month, setMonth] = useState<Month>(() => emptyMonth(defaultLabel));
   const [saveTimer, setSaveTimer] = useState<NodeJS.Timeout | null>(null);
 
-  // ── Firebase: load month list on boot ──
+  // ── Firebase Realtime Database: load month list on boot ──
   useEffect(() => {
     if (!firebaseOk) {
       setLoading(false);
       return;
     }
-    const col = collection(db, "meses");
-    const unsub = onSnapshot(col, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, label: (d.data().label as string) || d.id }));
-      list.sort((a, b) => a.id.localeCompare(b.id));
-      setMonthList(list);
+    const mesesRef = ref(realtimeDb, "meses");
+    const unsub = onValue(mesesRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const list = Object.keys(data).map((id) => ({
+          id,
+          label: (data[id].label as string) || id,
+        }));
+        list.sort((a, b) => a.id.localeCompare(b.id));
+        setMonthList(list);
+      } else {
+        setMonthList([]);
+      }
       setLoading(false);
     });
     return () => unsub();
   }, []);
 
-  // ── Firebase: load active month ──
+  // ── Firebase Realtime Database: load active month ──
   useEffect(() => {
     if (!firebaseOk || !activeMonthId) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    getDoc(doc(db, "meses", activeMonthId))
-      .then((snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
+    const monthRef = ref(realtimeDb, `meses/${activeMonthId}`);
+    get(monthRef)
+      .then((snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
           const base = emptyMonth((data.label as string) || activeMonthId);
           if (data.weeks) {
             base.weeks = (data.weeks as Week[]).map((w, wi) => ({
@@ -1255,13 +1264,14 @@ export default function ChecklistMedialunas() {
       .catch(() => setLoading(false));
   }, [activeMonthId]);
 
-  // ── Firebase: debounced auto-save ──
+  // ── Firebase Realtime Database: debounced auto-save ──
   const saveToFirebase = useCallback(async (m: Month) => {
     if (!firebaseOk) return;
     setSaveStatus("saving");
     try {
       const id = monthDocId(m.label);
-      await setDoc(doc(db, "meses", id), JSON.parse(JSON.stringify(m)));
+      const monthRef = ref(realtimeDb, `meses/${id}`);
+      await set(monthRef, JSON.parse(JSON.stringify(m)));
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2500);
     } catch (e) {
@@ -1304,7 +1314,7 @@ export default function ChecklistMedialunas() {
         }}
       >
         <div style={{ fontSize: 24, marginBottom: 8 }}>...</div>
-        <div style={{ fontSize: 14 }}>Conectando con Firebase...</div>
+        <div style={{ fontSize: 14 }}>Conectando con Realtime Database...</div>
       </div>
     );
 
@@ -1350,7 +1360,7 @@ export default function ChecklistMedialunas() {
             }}
           />
           {firebaseOk
-            ? "Firebase conectado - sincronizacion activa"
+            ? "Realtime Database conectado - sincronizacion activa"
             : "Modo local - configura Firebase para sincronizar"}
         </div>
 
