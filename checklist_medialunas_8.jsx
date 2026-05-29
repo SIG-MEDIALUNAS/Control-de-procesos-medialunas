@@ -7,13 +7,13 @@ import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot } fr
 // Ve a: console.firebase.google.com → tu proyecto → Configuración → Aplicaciones web
 // ─────────────────────────────────────────────────────────────────────────────
 const firebaseConfig = {
-NEXT_PUBLIC_FIREBASE_API_KEY: "AIzaSyBE3wpFexU7e8b_Y8jyxs4RqpXRUKzFdy8",
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "sig-medialunas.firebaseapp.com",
-  NEXT_PUBLIC_databaseURL: "https://sig-medialunas-default-rtdb.firebaseio.com",
-  NEXT_PUBLIC_FIREBASE_PROJECT_ID: "sig-medialunas",
-  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: "sig-medialunas.firebasestorage.app",
-  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "90996874020",
-  NEXT_PUBLIC_FIREBASE_APP_ID: "1:90996874020:web:73175efa260d0f325cb1b1"
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyBE3wpFexU7e8b_Y8jyxs4RqpXRUKzFdy8",
+  authDomain:        "sig-medialunas.firebaseapp.com",
+  projectId:         "sig-medialunas",
+  storageBucket:     "sig-medialunas.firebasestorage.app",
+  messagingSenderId: "909968740020",
+  appId:             "1:909968740020:web:73175efa260d0f325cb1b1"
 };
 
 // Inicialización Firebase
