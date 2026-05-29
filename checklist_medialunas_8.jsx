@@ -6,7 +6,6 @@ import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot } fr
 // 🔥 FIREBASE CONFIG — reemplazá estos valores con los de tu proyecto Firebase
 // Ve a: console.firebase.google.com → tu proyecto → Configuración → Aplicaciones web
 // ─────────────────────────────────────────────────────────────────────────────
-const firebaseConfig = {
 const FIREBASE_CONFIG = {
   apiKey:            "AIzaSyBE3wpFexU7e8b_Y8jyxs4RqpXRUKzFdy8",
   authDomain:        "sig-medialunas.firebaseapp.com",
