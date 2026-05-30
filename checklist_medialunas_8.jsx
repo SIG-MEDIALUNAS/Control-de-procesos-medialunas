@@ -120,7 +120,7 @@ const SECTORES = [
 const DIAS   = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
 const TURNOS = ["TM","TT","TN"];
 const MESES  = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-
+const ALL_MONTHS_2026 = MESES.map(m => `${m} 2026`);
 function emptyDay()  { return { meta:{fecha:"",lote:"",turno:"",resp:"",tipo:"m"}, datos:{}, alertas:{} }; }
 function emptyWeek(label){ return { label, days:DIAS.map(()=>emptyDay()) }; }
 function emptyMonth(label){ return { label, weeks:[1,2,3,4].map(i=>emptyWeek(`Semana ${i}`)) }; }
