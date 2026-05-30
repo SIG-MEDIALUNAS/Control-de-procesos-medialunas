@@ -614,11 +614,29 @@ const [month,setMonth] = useState(()=>emptyMonth(defaultLabel));
 
         {/* Month selector + new month */}
         <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
-          <select value={activeMonthId||""} onChange={e=>{setActiveMonthId(e.target.value||null);}}
-            style={{...S.inp(false),flex:1,fontSize:12}}>
-            <option value="">— Nuevo mes —</option>
-            {monthList.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
+         <select value={activeMonthId||""} onChange={e=>{
+  const val = e.target.value;
+  if(val.startsWith("new_")){
+    const label = val.replace("new_","");
+    const newM = emptyMonth(label);
+    setMonth(newM);
+    setActiveMonthId(null);
+  } else {
+    setActiveMonthId(val||null);
+  }
+}} style={{...S.inp(false),flex:1,fontSize:12}}>
+  <option value="">— Seleccionar mes —</option>
+  <optgroup label="2026">
+    {ALL_MONTHS_2026.map(m=>(
+      <option key={m} value={`new_${m}`}>{m}</option>
+    ))}
+  </optgroup>
+  {monthList.length>0&&(
+    <optgroup label="Guardados en Firebase">
+      {monthList.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
+    </optgroup>
+  )}
+</select>
         </div>
         <div style={{display:"flex",gap:6,marginBottom:8}}>
           <input type="text" value={month.label} onChange={e=>updMonth({...month,label:e.target.value})}
