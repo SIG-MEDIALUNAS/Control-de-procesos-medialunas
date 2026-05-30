@@ -513,10 +513,10 @@ export default function App(){
   const [monthList,setMonthList] = useState([]);
   const [activeMonthId,setActiveMonthId] = useState(null);
 
-  const now = new Date();
-  const defaultLabel = `${MESES[now.getMonth()]} ${now.getFullYear()}`;
-
-  const [month,setMonth] = useState(()=>emptyMonth(defaultLabel));
+const now = new Date();
+const defaultLabel = `${MESES[now.getMonth()]} ${now.getFullYear()}`;
+const ALL_MONTHS_2026 = MESES.map(m => `${m} 2026`);
+const [month,setMonth] = useState(()=>emptyMonth(defaultLabel));
 
   // ── Firebase: load month list on boot ──
   useEffect(()=>{
