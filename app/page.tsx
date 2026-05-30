@@ -1,4 +1,4 @@
-import ChecklistMedialunas from "@/components/checklist_medialunas_v2_4";
+import ChecklistMedialunas from "@/components/checklist-medialunas";
 
 export default function Page() {
   return (
