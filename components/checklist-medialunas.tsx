@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "firebase/firestore";
 
 // ─── FIREBASE CONFIG ──────────────────────────────────────────────────────────
 const FIREBASE_CONFIG = {
@@ -558,22 +558,38 @@ function DayView({monthId,weekIdx,dayIdx,usuario,onBack}){
 }
 
 // ─── WEEK / MONTH VIEWS ───────────────────────────────────────────────────────
-function WeekView({weekIdx,weekLabel,onDaySelect,onBack}){
+function WeekView({monthId,weekIdx,weekLabel,usuario,onDaySelect,onBack}){
+  const [tab,setTab]=useState("dias");
   return(
     <div>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
         <button onClick={onBack} style={S.btn(false,false)}>← Mes</button>
-        <span style={{fontSize:14,fontWeight:500}}>{weekLabel}</span>
+        <span style={{fontSize:14,fontWeight:500,flex:1}}>{weekLabel}</span>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-        {DIAS.map((dia,i)=>(
-          <div key={i} onClick={()=>onDaySelect(i)}
-            style={{...S.card,cursor:"pointer",padding:"12px",borderColor:"#e2e8f0"}}>
-            <div style={{fontSize:13,fontWeight:500,marginBottom:3}}>{dia}</div>
-            <div style={{fontSize:11,color:"#94a3b8"}}>Ver registros →</div>
-          </div>
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        {[["dias","📋 Días"],["resumen","📊 Resumen"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)}
+            style={{flex:1,padding:"8px",fontSize:12,borderRadius:8,cursor:"pointer",
+              border:`1px solid ${tab===id?"#185FA5":"#e2e8f0"}`,
+              background:tab===id?"#185FA5":"#f8fafc",
+              color:tab===id?"#E6F1FB":"#64748b",fontWeight:tab===id?500:400}}>
+            {label}
+          </button>
         ))}
       </div>
+      {tab==="dias"?(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {DIAS.map((dia,i)=>(
+            <div key={i} onClick={()=>onDaySelect(i)}
+              style={{...S.card,cursor:"pointer",padding:"12px",borderColor:"#e2e8f0"}}>
+              <div style={{fontSize:13,fontWeight:500,marginBottom:3}}>{dia}</div>
+              <div style={{fontSize:11,color:"#94a3b8"}}>Ver registros →</div>
+            </div>
+          ))}
+        </div>
+      ):(
+        <ResumenSemanal monthId={monthId} weekIdx={weekIdx} usuario={usuario}/>
+      )}
     </div>
   );
 }
@@ -654,13 +670,263 @@ export default function App(){
         ):nav==="month"?(
           <MonthView monthLabel={selectedMonth.label} onWeekSelect={i=>{setWeekIdx(i);setNav("week");}}/>
         ):nav==="week"?(
-          <WeekView weekIdx={weekIdx} weekLabel={`Semana ${weekIdx+1}`}
+          <WeekView monthId={selectedMonth.id} weekIdx={weekIdx} weekLabel={`Semana ${weekIdx+1}`} usuario={usuario}
             onDaySelect={i=>{setDayIdx(i);setNav("day");}} onBack={()=>setNav("month")}/>
+
+
         ):(
           <DayView monthId={selectedMonth.id} weekIdx={weekIdx} dayIdx={dayIdx}
             usuario={usuario} onBack={()=>setNav("week")}/>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── WEEKLY SUMMARY COMPONENT ─────────────────────────────────────────────────
+// Este componente se agrega al WeekView para mostrar alertas + observaciones
+// con ranking y lista por turno. Solo calidad ve todos los turnos.
+
+function ResumenSemanal({ monthId, weekIdx, usuario }) {
+  const [diasData, setDiasData] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!firebaseOk) { setLoading(false); return; }
+    // Cargar los 7 días de la semana
+    const promises = DIAS.map((_, di) => {
+      const ref = doc(db, dayPath(monthId, weekIdx, di));
+      return getDoc(ref).then(snap => ({ di, data: snap.exists() ? snap.data() : null }));
+    });
+    Promise.all(promises).then(results => {
+      const data = {};
+      results.forEach(({ di, data: d }) => { if (d) data[di] = d; });
+      setDiasData(data);
+      setLoading(false);
+    });
+  }, [monthId, weekIdx]);
+
+  if (loading) return <div style={{ padding: 20, textAlign: "center", color: "#64748b" }}>Cargando resumen...</div>;
+
+  // ── Recopilar alertas y observaciones ──
+  const alertaConteo = {}; // { "Sector — Campo": count }
+  const alertasPorTurno = { TM: [], TT: [], TN: [] };
+  const obsPorTurno = { TM: [], TT: [], TN: [] };
+
+  Object.entries(diasData).forEach(([diIdx, dayData]) => {
+    const registros = dayData.registros || {};
+    TURNOS.forEach(turno => {
+      if (usuario.rol !== ROLES.CALIDAD && usuario.turno !== turno) return;
+      const recs = registros[turno] || [];
+      recs.forEach((rec, ri) => {
+        // Alertas automáticas
+        SECTORES.forEach(s => s.fields.forEach(f => {
+          if (rec.alertas[f.id]) {
+            const key = `${s.label} — ${f.label}`;
+            alertaConteo[key] = (alertaConteo[key] || 0) + 1;
+            alertasPorTurno[turno].push({
+              dia: DIAS[diIdx],
+              rec: ri + 1,
+              sector: s.label,
+              campo: f.label,
+              msg: f.al?.msg || "",
+              valor: rec.datos[f.id] || "",
+              responsable: rec.responsable,
+              hora: rec.hora,
+            });
+          }
+        }));
+        // Observaciones escritas
+        SECTORES.forEach(s => s.fields.forEach(f => {
+          if (f.type === "ob" && rec.datos[f.id] && rec.datos[f.id].trim()) {
+            obsPorTurno[turno].push({
+              dia: DIAS[diIdx],
+              rec: ri + 1,
+              sector: s.label,
+              texto: rec.datos[f.id].trim(),
+              responsable: rec.responsable,
+              hora: rec.hora,
+            });
+          }
+        }));
+      });
+    });
+  });
+
+  // ── Ranking de alertas (ordenado por frecuencia) ──
+  const ranking = Object.entries(alertaConteo)
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => ({ key, count }));
+
+  const totalAlertas = ranking.reduce((s, r) => s + r.count, 0);
+  const totalObs = Object.values(obsPorTurno).flat().length;
+
+  // ── Exportar TXT ──
+  function exportarResumen() {
+    let t = `RESUMEN SEMANAL — SEMANA ${weekIdx + 1}\n`;
+    t += `Mes: ${monthId} | Generado: ${new Date().toLocaleDateString("es-AR")}\n`;
+    t += `${"=".repeat(55)}\n\n`;
+    t += `TOTALES: ${totalAlertas} alertas | ${totalObs} observaciones\n\n`;
+
+    // Ranking
+    t += `${"─".repeat(40)}\nRANKING DE ALERTAS (más frecuentes primero)\n${"─".repeat(40)}\n`;
+    if (ranking.length === 0) {
+      t += "Sin alertas registradas esta semana.\n";
+    } else {
+      ranking.forEach((r, i) => { t += `${i + 1}. ${r.key}: ${r.count} vez${r.count > 1 ? "es" : ""}\n`; });
+    }
+    t += "\n";
+
+    // Por turno
+    TURNOS.forEach(turno => {
+      if (usuario.rol !== ROLES.CALIDAD && usuario.turno !== turno) return;
+      t += `${"─".repeat(40)}\nTURNO ${turno}\n${"─".repeat(40)}\n`;
+      const als = alertasPorTurno[turno];
+      const obs = obsPorTurno[turno];
+      if (als.length === 0 && obs.length === 0) {
+        t += "Sin desvíos ni observaciones.\n\n";
+        return;
+      }
+      if (als.length > 0) {
+        t += `\nALERTAS (${als.length}):\n`;
+        als.forEach((a, i) => {
+          t += `  ${i + 1}. [${a.dia} · Rec.${a.rec} · ${a.hora}] ${a.sector} — ${a.campo}`;
+          if (a.valor) t += ` (valor: ${a.valor})`;
+          t += ` · ${a.responsable}\n`;
+          if (a.msg) t += `     → ${a.msg}\n`;
+        });
+      }
+      if (obs.length > 0) {
+        t += `\nOBSERVACIONES (${obs.length}):\n`;
+        obs.forEach((o, i) => {
+          t += `  ${i + 1}. [${o.dia} · Rec.${o.rec} · ${o.hora}] ${o.sector} · ${o.responsable}\n`;
+          t += `     "${o.texto}"\n`;
+        });
+      }
+      t += "\n";
+    });
+
+    const b = new Blob([t], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b);
+    a.download = `resumen_semana${weekIdx + 1}_${monthId}.txt`;
+    a.click();
+  }
+
+  const turnosVisibles = TURNOS.filter(t => usuario.rol === ROLES.CALIDAD || usuario.turno === t);
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 500 }}>Resumen — Semana {weekIdx + 1}</div>
+        <button onClick={exportarResumen}
+          style={{ ...S.btn(false, false), padding: "6px 12px", fontSize: 12 }}>
+          ↓ Exportar .txt
+        </button>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+        {[
+          ["Alertas", totalAlertas, totalAlertas > 0 ? "#FCEBEB" : "#E1F5EE", totalAlertas > 0 ? "#A32D2D" : "#085041"],
+          ["Observaciones", totalObs, totalObs > 0 ? "#FAEEDA" : "#E1F5EE", totalObs > 0 ? "#633806" : "#085041"],
+          ["Desvíos únicos", ranking.length, ranking.length > 0 ? "#FCEBEB" : "#E1F5EE", ranking.length > 0 ? "#A32D2D" : "#085041"],
+        ].map(([label, val, bg, color]) => (
+          <div key={label} style={{ background: bg, borderRadius: 8, padding: "10px 6px", textAlign: "center" }}>
+            <div style={{ fontSize: 20, fontWeight: 500, color }}>{val}</div>
+            <div style={{ fontSize: 10, color, marginTop: 2, lineHeight: 1.3 }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Ranking */}
+      {ranking.length > 0 && (
+        <div style={{ ...S.card, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>
+            🏆 Ranking — alertas más frecuentes
+          </div>
+          {ranking.map((r, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <div style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 500,
+                background: i === 0 ? "#FFA000" : i === 1 ? "#9E9E9E" : i === 2 ? "#795548" : "#e2e8f0",
+                color: i < 3 ? "#fff" : "#64748b" }}>
+                {i + 1}
+              </div>
+              <div style={{ flex: 1, fontSize: 12, color: "#1e293b" }}>{r.key}</div>
+              <div style={{ fontSize: 12, fontWeight: 500, background: "#FCEBEB", color: "#A32D2D", borderRadius: 4, padding: "2px 8px" }}>
+                {r.count}x
+              </div>
+              {/* Barra proporcional */}
+              <div style={{ width: 60, height: 6, background: "#f1f5f9", borderRadius: 3 }}>
+                <div style={{ height: 6, borderRadius: 3, background: "#E24B4A", width: `${Math.round((r.count / ranking[0].count) * 100)}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Por turno */}
+      {turnosVisibles.map(turno => {
+        const als = alertasPorTurno[turno];
+        const obs = obsPorTurno[turno];
+        if (als.length === 0 && obs.length === 0) return (
+          <div key={turno} style={{ ...S.card, marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>Turno {turno}</div>
+              <span style={S.bok}>✓ Sin desvíos</span>
+            </div>
+          </div>
+        );
+        return (
+          <div key={turno} style={{ ...S.card, marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>
+              Turno {turno}
+              <span style={{ fontSize: 11, fontWeight: 400, color: "#64748b", marginLeft: 8 }}>
+                {als.length} alerta{als.length !== 1 ? "s" : ""} · {obs.length} observación{obs.length !== 1 ? "es" : ""}
+              </span>
+            </div>
+
+            {als.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 500, color: "#A32D2D", marginBottom: 6 }}>⚠ Alertas</div>
+                {als.map((a, i) => (
+                  <div key={i} style={{ background: "#FCEBEB", border: "1px solid #F09595", borderRadius: 6, padding: "7px 10px", marginBottom: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: "#A32D2D" }}>{a.sector} — {a.campo}</div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                      {a.dia} · Rec.{a.rec} · {a.hora} · {a.responsable}
+                      {a.valor && <span> · Valor registrado: <strong>{a.valor}</strong></span>}
+                    </div>
+                    {a.msg && <div style={{ fontSize: 11, color: "#A32D2D", marginTop: 2 }}>→ {a.msg}</div>}
+                  </div>
+                ))}
+              </>
+            )}
+
+            {obs.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 500, color: "#633806", marginBottom: 6, marginTop: als.length > 0 ? 10 : 0 }}>📝 Observaciones</div>
+                {obs.map((o, i) => (
+                  <div key={i} style={{ background: "#FAEEDA", border: "1px solid #f9c74f", borderRadius: 6, padding: "7px 10px", marginBottom: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: "#633806" }}>{o.sector}</div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                      {o.dia} · Rec.{o.rec} · {o.hora} · {o.responsable}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#1e293b", marginTop: 4, fontStyle: "italic" }}>"{o.texto}"</div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        );
+      })}
+
+      {totalAlertas === 0 && totalObs === 0 && (
+        <div style={{ textAlign: "center", padding: "30px 20px", background: "#E1F5EE", border: "1px solid #5DCAA5", borderRadius: 10, color: "#085041" }}>
+          <div style={{ fontSize: 24, marginBottom: 8 }}>✓</div>
+          <div style={{ fontSize: 14, fontWeight: 500 }}>Semana sin desvíos ni observaciones</div>
+        </div>
+      )}
     </div>
   );
 }
