@@ -52,8 +52,11 @@ const SECTORES = [
     { id:"f_ob", type:"ob", label:"Observaciones" }
   ]},
   { id:"amas", label:"Amasado", fields:[
-    { id:"a_tagua", type:"num", label:"T° agua del chiller",     unit:"°C",  ref:"PCC",
-      al:{min:5,max:13,msg:"Agua fuera del rango (5°C a 13°C) — P280 p.3.2"} },
+    { id:"a_tagua",   type:"num", label:"T° agua del chiller",      unit:"°C",  ref:"PCC", al:{min:1,max:5,msg:"Agua fuera del rango (1°C a 5°C)"} },
+    { id:"a_agua_kg", type:"num", label:"Cantidad de agua cargada",   unit:"kg",  ref:"PC" },
+    { id:"a_hielo_kg",type:"num", label:"Cantidad de hielo cargado",  unit:"kg",  ref:"PC" },
+
+
     { id:"a_tamb",  type:"num", label:"T° ambiente",             unit:"°C",  ref:"PC" },
     { id:"a_tcam",  type:"num", label:"T° cámara de masas",      unit:"°C",  ref:"PCC",
       al:{min:6,max:10,msg:"T° fuera del rango (6°C a 10°C)"} },
@@ -182,7 +185,7 @@ const SECTORES = [
 // PCC fields para dashboard
 const PCC_TRENDS = [
   { id:"f_tcam",    label:"T° cámara masas",  unit:"°C", min:6,   max:10,  color:"#8b5cf6" },
-  { id:"a_tagua",   label:"T° agua chiller",  unit:"°C", min:5,   max:13,  color:"#3b82f6" },
+  { id:"a_tagua",   label:"T° agua chiller",  unit:"°C", min:1,   max:5,   color:"#3b82f6" },
   { id:"a_tmasa",   label:"T° masa final",    unit:"°C", min:18,  max:22,  color:"#ef4444" },
   { id:"l_tamb",    label:"T° amb. laminado", unit:"°C", min:16,  max:20,  color:"#f97316" },
   { id:"fe_temp",   label:"T° fermentador",   unit:"°C", min:28,  max:33,  color:"#eab308" },
@@ -696,6 +699,10 @@ function DayView({monthId,weekIdx,dayIdx,usuario,onBack}){
 function ResumenSemanal({monthId,weekIdx,usuario}){
   const [diasData,setDiasData]=useState({});
   const [loading,setLoading]=useState(true);
+  const [tabActiva,setTabActiva]=useState("alertas"); // alertas | destildados | reincidencias
+  const [modoEdicion,setModoEdicion]=useState(false);
+  const [alertasEliminadas,setAlertasEliminadas]=useState({});
+  const [notasEdicion,setNotasEdicion]=useState({});
 
   useEffect(()=>{
     if(!firebaseOk){setLoading(false);return;}
@@ -712,27 +719,55 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
 
   if(loading) return <div style={{padding:20,textAlign:"center",color:"#64748b"}}>Cargando resumen...</div>;
 
+  // ── Recolección de datos ──
   const alertaConteo={};
   const alertasPorTurno={TM:[],TT:[],TN:[]};
   const obsPorTurno={TM:[],TT:[],TN:[]};
+  const destildadosPorTurno={TM:[],TT:[],TN:[]};
+  const reincidencias={};
 
   Object.entries(diasData).forEach(([diIdx,dayData])=>{
     const registros=dayData.registros||{};
     TURNOS.forEach(turno=>{
       if(usuario.rol!==ROLES.CALIDAD&&usuario.turno!==turno) return;
       (registros[turno]||[]).forEach((rec,ri)=>{
+        const uid=`${turno}_${diIdx}_${ri}`;
+        // Alertas numéricas
         SECTORES.forEach(s=>s.fields.forEach(f=>{
           if(rec.alertas[f.id]){
             const key=`${s.label} — ${f.label}`;
             alertaConteo[key]=(alertaConteo[key]||0)+1;
-            alertasPorTurno[turno].push({dia:DIAS[diIdx],rec:ri+1,sector:s.label,campo:f.label,
-              msg:f.al?.msg||"",valor:rec.datos[f.id]||"",responsable:rec.responsable,hora:rec.hora});
+            alertasPorTurno[turno].push({
+              uid:`${uid}_${f.id}`,dia:DIAS[diIdx],rec:ri+1,sector:s.label,
+              campo:f.label,msg:f.al?.msg||"",valor:rec.datos[f.id]||"",
+              responsable:rec.responsable,hora:rec.hora
+            });
+            // Reincidencias globales
+            if(!reincidencias[key]) reincidencias[key]={count:0,instancias:[]};
+            reincidencias[key].count++;
+            reincidencias[key].instancias.push({turno,dia:DIAS[diIdx],rec:ri+1,valor:rec.datos[f.id]||"",responsable:rec.responsable,hora:rec.hora});
           }
         }));
+        // Observaciones
         SECTORES.forEach(s=>s.fields.forEach(f=>{
           if(f.type==="ob"&&rec.datos[f.id]&&rec.datos[f.id].trim()){
-            obsPorTurno[turno].push({dia:DIAS[diIdx],rec:ri+1,sector:s.label,
+            obsPorTurno[turno].push({uid:`${uid}_${f.id}_ob`,dia:DIAS[diIdx],rec:ri+1,sector:s.label,
               texto:rec.datos[f.id].trim(),responsable:rec.responsable,hora:rec.hora});
+          }
+        }));
+        // Ítems destildados (checklist sin marcar)
+        SECTORES.forEach(s=>s.fields.forEach(f=>{
+          if(f.type==="ck"){
+            const arr=rec.datos[f.id]||[];
+            f.items.forEach((item,ix)=>{
+              if(!arr[ix]){
+                destildadosPorTurno[turno].push({
+                  uid:`${uid}_${f.id}_${ix}`,dia:DIAS[diIdx],rec:ri+1,
+                  sector:s.label,checklist:f.label,item,
+                  responsable:rec.responsable,hora:rec.hora
+                });
+              }
+            });
           }
         }));
       });
@@ -740,22 +775,57 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
   });
 
   const ranking=Object.entries(alertaConteo).sort((a,b)=>b[1]-a[1]).map(([key,count])=>({key,count}));
-  const totalAlertas=ranking.reduce((s,r)=>s+r.count,0);
-  const totalObs=Object.values(obsPorTurno).flat().length;
+  const reincList=Object.entries(reincidencias).filter(([,v])=>v.count>1).sort((a,b)=>b[1].count-a[1].count);
   const turnosVisibles=TURNOS.filter(t=>usuario.rol===ROLES.CALIDAD||usuario.turno===t);
+
+  // Filtrar eliminados
+  const alsFiltradas=(turno)=>alertasPorTurno[turno].filter(a=>!alertasEliminadas[a.uid]);
+  const destFiltrados=(turno)=>destildadosPorTurno[turno];
+  const totalAlertas=turnosVisibles.reduce((s,t)=>s+alsFiltradas(t).length,0);
+  const totalObs=turnosVisibles.reduce((s,t)=>s+obsPorTurno[t].length,0);
+  const totalDest=turnosVisibles.reduce((s,t)=>s+destFiltrados(t).length,0);
+
+  function eliminarAlerta(uid){ setAlertasEliminadas(p=>({...p,[uid]:true})); }
+  function restaurarAlerta(uid){ setAlertasEliminadas(p=>{const n={...p};delete n[uid];return n;}); }
+  function setNota(uid,val){ setNotasEdicion(p=>({...p,[uid]:val})); }
 
   function exportar(){
     let t=`RESUMEN SEMANAL — SEMANA ${weekIdx+1}\nMes: ${monthId} | Generado: ${new Date().toLocaleDateString("es-AR")}\n${"=".repeat(55)}\n\n`;
-    t+=`TOTALES: ${totalAlertas} alertas | ${totalObs} observaciones\n\n`;
+    t+=`TOTALES: ${totalAlertas} alertas | ${totalObs} observaciones | ${totalDest} ítems destildados\n\n`;
+    // Ranking
     t+=`${"─".repeat(40)}\nRANKING DE ALERTAS\n${"─".repeat(40)}\n`;
     ranking.length===0?t+="Sin alertas.\n":ranking.forEach((r,i)=>{t+=`${i+1}. ${r.key}: ${r.count}x\n`;});
     t+="\n";
+    // Reincidencias
+    if(reincList.length>0){
+      t+=`${"─".repeat(40)}\nREINCIDENCIAS (aparece >1 vez)\n${"─".repeat(40)}\n`;
+      reincList.forEach(([key,v])=>{
+        t+=`⚠ ${key} — ${v.count} veces\n`;
+        v.instancias.forEach((ins,i)=>{t+=`  ${i+1}. ${ins.turno} · ${ins.dia} · Rec.${ins.rec} · ${ins.hora} · ${ins.responsable}${ins.valor?` · Valor: ${ins.valor}`:""}\n`;});
+        t+="\n";
+      });
+    }
+    // Por turno
     turnosVisibles.forEach(turno=>{
       t+=`${"─".repeat(40)}\nTURNO ${turno}\n${"─".repeat(40)}\n`;
-      const als=alertasPorTurno[turno]; const obs=obsPorTurno[turno];
-      if(!als.length&&!obs.length){t+="Sin desvíos.\n\n";return;}
-      if(als.length){t+=`\nALERTAS (${als.length}):\n`;als.forEach((a,i)=>{t+=`  ${i+1}. [${a.dia} · Rec.${a.rec} · ${a.hora}] ${a.sector} — ${a.campo}${a.valor?` (valor: ${a.valor})`:""} · ${a.responsable}\n`;if(a.msg)t+=`     → ${a.msg}\n`;});}
-      if(obs.length){t+=`\nOBSERVACIONES (${obs.length}):\n`;obs.forEach((o,i)=>{t+=`  ${i+1}. [${o.dia} · Rec.${o.rec} · ${o.hora}] ${o.sector} · ${o.responsable}\n     "${o.texto}"\n`;});}
+      const als=alsFiltradas(turno); const obs=obsPorTurno[turno]; const dest=destFiltrados(turno);
+      if(!als.length&&!obs.length&&!dest.length){t+="Sin desvíos.\n\n";return;}
+      if(als.length){
+        t+=`\nALERTAS (${als.length}):\n`;
+        als.forEach((a,i)=>{
+          t+=`  ${i+1}. [${a.dia} · Rec.${a.rec} · ${a.hora}] ${a.sector} — ${a.campo}${a.valor?` (valor: ${a.valor})`:""} · ${a.responsable}\n`;
+          if(a.msg) t+=`     → ${a.msg}\n`;
+          if(notasEdicion[a.uid]) t+=`     📝 Nota calidad: ${notasEdicion[a.uid]}\n`;
+        });
+      }
+      if(obs.length){
+        t+=`\nOBSERVACIONES (${obs.length}):\n`;
+        obs.forEach((o,i)=>{t+=`  ${i+1}. [${o.dia} · Rec.${o.rec} · ${o.hora}] ${o.sector} · ${o.responsable}\n     "${o.texto}"\n`;});
+      }
+      if(dest.length){
+        t+=`\nÍTEMS NO MARCADOS (${dest.length}):\n`;
+        dest.forEach((d,i)=>{t+=`  ${i+1}. [${d.dia} · Rec.${d.rec} · ${d.hora}] ${d.sector} — ${d.checklist}\n     ✗ ${d.item} · ${d.responsable}\n`;});
+      }
       t+="\n";
     });
     const b=new Blob([t],{type:"text/plain"});
@@ -765,92 +835,247 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
     a.click();
   }
 
+  // ── UI ──
   return(
     <div>
+      {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <div style={{fontSize:14,fontWeight:500}}>Resumen — Semana {weekIdx+1}</div>
-        <button onClick={exportar} style={{...S.btn(false,false),padding:"6px 12px",fontSize:12}}>↓ Exportar .txt</button>
+        <div style={{display:"flex",gap:6}}>
+          {usuario.rol===ROLES.CALIDAD&&(
+            <button onClick={()=>setModoEdicion(p=>!p)}
+              style={{...S.btnSm(modoEdicion),padding:"6px 10px",fontSize:12,
+                borderColor:modoEdicion?"#185FA5":"#e2e8f0",
+                background:modoEdicion?"#E6F1FB":"#f8fafc",color:modoEdicion?"#185FA5":"#64748b"}}>
+              {modoEdicion?"✓ Edición ON":"✏ Editar"}
+            </button>
+          )}
+          <button onClick={exportar} style={{...S.btn(false,false),padding:"6px 12px",fontSize:12}}>↓ .txt</button>
+        </div>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
-        {[["Alertas",totalAlertas,totalAlertas>0?"#FCEBEB":"#E1F5EE",totalAlertas>0?"#A32D2D":"#085041"],
-          ["Observaciones",totalObs,totalObs>0?"#FAEEDA":"#E1F5EE",totalObs>0?"#633806":"#085041"],
-          ["Desvíos únicos",ranking.length,ranking.length>0?"#FCEBEB":"#E1F5EE",ranking.length>0?"#A32D2D":"#085041"]
+
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:12}}>
+        {[
+          ["Alertas",totalAlertas,totalAlertas>0?"#FCEBEB":"#E1F5EE",totalAlertas>0?"#A32D2D":"#085041"],
+          ["Obs.",totalObs,totalObs>0?"#FAEEDA":"#E1F5EE",totalObs>0?"#633806":"#085041"],
+          ["Destild.",totalDest,totalDest>0?"#f1f5f9":"#E1F5EE",totalDest>0?"#475569":"#085041"],
+          ["Reinc.",reincList.length,reincList.length>0?"#FCEBEB":"#E1F5EE",reincList.length>0?"#A32D2D":"#085041"],
         ].map(([label,val,bg,color])=>(
-          <div key={label} style={{background:bg,borderRadius:8,padding:"10px 6px",textAlign:"center"}}>
-            <div style={{fontSize:20,fontWeight:500,color}}>{val}</div>
-            <div style={{fontSize:10,color,marginTop:2,lineHeight:1.3}}>{label}</div>
+          <div key={label} style={{background:bg,borderRadius:8,padding:"8px 4px",textAlign:"center"}}>
+            <div style={{fontSize:18,fontWeight:500,color}}>{val}</div>
+            <div style={{fontSize:9,color,marginTop:2,lineHeight:1.3}}>{label}</div>
           </div>
         ))}
       </div>
-      {ranking.length>0&&(
-        <div style={{...S.card,marginBottom:12}}>
-          <div style={{fontSize:13,fontWeight:500,marginBottom:10}}>🏆 Ranking — alertas más frecuentes</div>
-          {ranking.map((r,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-              <div style={{width:22,height:22,borderRadius:"50%",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:500,
-                background:i===0?"#FFA000":i===1?"#9E9E9E":i===2?"#795548":"#e2e8f0",color:i<3?"#fff":"#64748b"}}>{i+1}</div>
-              <div style={{flex:1,fontSize:12}}>{r.key}</div>
-              <div style={{fontSize:12,fontWeight:500,background:"#FCEBEB",color:"#A32D2D",borderRadius:4,padding:"2px 8px"}}>{r.count}x</div>
-              <div style={{width:60,height:6,background:"#f1f5f9",borderRadius:3}}>
-                <div style={{height:6,borderRadius:3,background:"#E24B4A",width:`${Math.round((r.count/ranking[0].count)*100)}%`}}/>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {turnosVisibles.map(turno=>{
-        const als=alertasPorTurno[turno]; const obs=obsPorTurno[turno];
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:5,marginBottom:12,overflowX:"auto",scrollbarWidth:"none"}}>
+        {[
+          ["alertas",`⚠ Alertas (${totalAlertas})`],
+          ["destildados",`☐ Destildados (${totalDest})`],
+          ["reincidencias",`🔁 Reinc. (${reincList.length})`],
+          ["ranking","🏆 Ranking"],
+        ].map(([id,label])=>(
+          <button key={id} onClick={()=>setTabActiva(id)}
+            style={{whiteSpace:"nowrap",padding:"6px 10px",fontSize:11,borderRadius:20,cursor:"pointer",flexShrink:0,
+              border:`1px solid ${tabActiva===id?"#185FA5":"#e2e8f0"}`,
+              background:tabActiva===id?"#185FA5":"#f8fafc",
+              color:tabActiva===id?"#E6F1FB":"#64748b",fontWeight:tabActiva===id?500:400}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* TAB: ALERTAS */}
+      {tabActiva==="alertas"&&turnosVisibles.map(turno=>{
+        const als=alsFiltradas(turno); const obs=obsPorTurno[turno];
         if(!als.length&&!obs.length) return(
           <div key={turno} style={{...S.card,marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
               <div style={{fontSize:13,fontWeight:500}}>Turno {turno}</div>
-              <span style={S.bok}>✓ Sin desvíos</span>
+              <span style={S.bok}>✓ Sin alertas</span>
             </div>
           </div>
         );
         return(
           <div key={turno} style={{...S.card,marginBottom:8}}>
-            <div style={{fontSize:13,fontWeight:500,marginBottom:10}}>
+            <div style={{fontSize:13,fontWeight:500,marginBottom:8}}>
               Turno {turno}
               <span style={{fontSize:11,fontWeight:400,color:"#64748b",marginLeft:8}}>
                 {als.length} alerta{als.length!==1?"s":""} · {obs.length} obs.
               </span>
             </div>
-            {als.length>0&&(<>
-              <div style={{fontSize:11,fontWeight:500,color:"#A32D2D",marginBottom:6}}>⚠ Alertas</div>
-              {als.map((a,i)=>(
-                <div key={i} style={{background:"#FCEBEB",border:"1px solid #F09595",borderRadius:6,padding:"7px 10px",marginBottom:4}}>
-                  <div style={{fontSize:12,fontWeight:500,color:"#A32D2D"}}>{a.sector} — {a.campo}</div>
-                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
-                    {a.dia} · Rec.{a.rec} · {a.hora} · {a.responsable}
-                    {a.valor&&<span> · Valor: <strong>{a.valor}</strong></span>}
+            {als.map((a,i)=>(
+              <div key={i} style={{background:"#FCEBEB",border:"1px solid #F09595",borderRadius:6,padding:"7px 10px",marginBottom:4}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,fontWeight:500,color:"#A32D2D"}}>{a.sector} — {a.campo}</div>
+                    <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
+                      {a.dia} · Rec.{a.rec} · {a.hora} · {a.responsable}
+                      {a.valor&&<span> · Valor: <strong>{a.valor}</strong></span>}
+                    </div>
+                    {a.msg&&<div style={{fontSize:11,color:"#A32D2D",marginTop:2}}>→ {a.msg}</div>}
+                    {/* Nota de edición */}
+                    {modoEdicion?(
+                      <textarea value={notasEdicion[a.uid]||""} onChange={e=>setNota(a.uid,e.target.value)}
+                        placeholder="Agregar nota de calidad (opcional)..."
+                        style={{...S.inp(false),height:40,resize:"none",marginTop:6,fontSize:11,background:"#fff"}}/>
+                    ):notasEdicion[a.uid]?(
+                      <div style={{fontSize:11,color:"#185FA5",marginTop:4,fontStyle:"italic"}}>📝 {notasEdicion[a.uid]}</div>
+                    ):null}
                   </div>
-                  {a.msg&&<div style={{fontSize:11,color:"#A32D2D",marginTop:2}}>→ {a.msg}</div>}
+                  {modoEdicion&&(
+                    <button onClick={()=>eliminarAlerta(a.uid)}
+                      style={{padding:"3px 8px",fontSize:11,border:"1px solid #E24B4A",borderRadius:5,
+                        background:"#fff",color:"#E24B4A",cursor:"pointer",flexShrink:0}}>
+                      Eliminar
+                    </button>
+                  )}
                 </div>
-              ))}
-            </>)}
-            {obs.length>0&&(<>
-              <div style={{fontSize:11,fontWeight:500,color:"#633806",marginBottom:6,marginTop:als.length>0?10:0}}>📝 Observaciones</div>
-              {obs.map((o,i)=>(
-                <div key={i} style={{background:"#FAEEDA",border:"1px solid #f9c74f",borderRadius:6,padding:"7px 10px",marginBottom:4}}>
-                  <div style={{fontSize:12,fontWeight:500,color:"#633806"}}>{o.sector}</div>
-                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{o.dia} · Rec.{o.rec} · {o.hora} · {o.responsable}</div>
-                  <div style={{fontSize:12,color:"#1e293b",marginTop:4,fontStyle:"italic"}}>"{o.texto}"</div>
-                </div>
-              ))}
-            </>)}
+              </div>
+            ))}
+            {obs.map((o,i)=>(
+              <div key={i} style={{background:"#FAEEDA",border:"1px solid #f9c74f",borderRadius:6,padding:"7px 10px",marginBottom:4}}>
+                <div style={{fontSize:12,fontWeight:500,color:"#633806"}}>{o.sector}</div>
+                <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{o.dia} · Rec.{o.rec} · {o.hora} · {o.responsable}</div>
+                <div style={{fontSize:12,color:"#1e293b",marginTop:4,fontStyle:"italic"}}>"{o.texto}"</div>
+              </div>
+            ))}
           </div>
         );
       })}
-      {totalAlertas===0&&totalObs===0&&(
-        <div style={{textAlign:"center",padding:"30px 20px",background:"#E1F5EE",border:"1px solid #5DCAA5",borderRadius:10,color:"#085041"}}>
-          <div style={{fontSize:24,marginBottom:8}}>✓</div>
-          <div style={{fontSize:14,fontWeight:500}}>Semana sin desvíos ni observaciones</div>
+
+      {/* TAB: DESTILDADOS */}
+      {tabActiva==="destildados"&&(
+        <div>
+          {totalDest===0?(
+            <div style={{textAlign:"center",padding:"24px",background:"#E1F5EE",border:"1px solid #5DCAA5",borderRadius:10,color:"#085041",fontSize:13}}>
+              ✓ Todos los ítems marcados esta semana
+            </div>
+          ):turnosVisibles.map(turno=>{
+            const dest=destFiltrados(turno);
+            if(!dest.length) return(
+              <div key={turno} style={{...S.card,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <div style={{fontSize:13,fontWeight:500}}>Turno {turno}</div>
+                  <span style={S.bok}>✓ Todo marcado</span>
+                </div>
+              </div>
+            );
+            return(
+              <div key={turno} style={{...S.card,marginBottom:8}}>
+                <div style={{fontSize:13,fontWeight:500,marginBottom:8}}>
+                  Turno {turno}
+                  <span style={{fontSize:11,fontWeight:400,color:"#64748b",marginLeft:8}}>{dest.length} ítems sin marcar</span>
+                </div>
+                {dest.map((d,i)=>(
+                  <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 8px",
+                    background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:6,marginBottom:4}}>
+                    <span style={{fontSize:14,flexShrink:0,marginTop:1}}>☐</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,color:"#1e293b",fontWeight:500}}>{d.item}</div>
+                      <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
+                        {d.sector} · {d.checklist}
+                      </div>
+                      <div style={{fontSize:11,color:"#94a3b8"}}>
+                        {d.dia} · Rec.{d.rec} · {d.hora} · {d.responsable}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* TAB: REINCIDENCIAS */}
+      {tabActiva==="reincidencias"&&(
+        <div>
+          {reincList.length===0?(
+            <div style={{textAlign:"center",padding:"24px",background:"#E1F5EE",border:"1px solid #5DCAA5",borderRadius:10,color:"#085041",fontSize:13}}>
+              ✓ Sin reincidencias esta semana
+            </div>
+          ):reincList.map(([key,v],i)=>(
+            <div key={i} style={{...S.card,marginBottom:8,borderLeft:`3px solid ${v.count>=3?"#E24B4A":v.count>=2?"#f97316":"#e2e8f0"}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:13,fontWeight:500,flex:1}}>{key}</div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{fontSize:14,fontWeight:600,
+                    background:v.count>=3?"#FCEBEB":v.count>=2?"#FAEEDA":"#f1f5f9",
+                    color:v.count>=3?"#A32D2D":v.count>=2?"#633806":"#64748b",
+                    borderRadius:20,padding:"2px 10px"}}>
+                    {v.count}x
+                  </div>
+                  {v.count>=3&&<span style={{fontSize:10,background:"#FCEBEB",color:"#A32D2D",borderRadius:4,padding:"2px 5px",fontWeight:600}}>CRÍTICO</span>}
+                  {v.count===2&&<span style={{fontSize:10,background:"#FAEEDA",color:"#633806",borderRadius:4,padding:"2px 5px",fontWeight:600}}>ATENCIÓN</span>}
+                </div>
+              </div>
+              {v.instancias.map((ins,j)=>(
+                <div key={j} style={{fontSize:11,color:"#64748b",padding:"4px 0",borderTop:"1px solid #f1f5f9"}}>
+                  {j+1}. {ins.turno} · {ins.dia} · Rec.{ins.rec} · {ins.hora} · {ins.responsable}
+                  {ins.valor&&<span style={{color:"#A32D2D",fontWeight:500}}> · Valor: {ins.valor}</span>}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* TAB: RANKING */}
+      {tabActiva==="ranking"&&(
+        <div>
+          {ranking.length===0?(
+            <div style={{textAlign:"center",padding:"24px",background:"#E1F5EE",border:"1px solid #5DCAA5",borderRadius:10,color:"#085041",fontSize:13}}>
+              ✓ Sin alertas esta semana
+            </div>
+          ):(
+            <div style={S.card}>
+              <div style={{fontSize:13,fontWeight:500,marginBottom:12}}>🏆 Alertas más frecuentes</div>
+              {ranking.map((r,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,
+                    background:i===0?"#FFA000":i===1?"#9E9E9E":i===2?"#795548":"#e2e8f0",color:i<3?"#fff":"#64748b"}}>{i+1}</div>
+                  <div style={{flex:1,fontSize:12}}>{r.key}</div>
+                  <div style={{fontSize:12,fontWeight:600,background:"#FCEBEB",color:"#A32D2D",borderRadius:4,padding:"2px 8px",flexShrink:0}}>{r.count}x</div>
+                  <div style={{width:70,height:6,background:"#f1f5f9",borderRadius:3,flexShrink:0}}>
+                    <div style={{height:6,borderRadius:3,background:i===0?"#ef4444":i===1?"#f97316":"#E24B4A",
+                      width:`${Math.round((r.count/ranking[0].count)*100)}%`}}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Alertas eliminadas (solo en modo edición) */}
+      {modoEdicion&&Object.keys(alertasEliminadas).length>0&&(
+        <div style={{...S.card,borderColor:"#94a3b8",marginTop:8}}>
+          <div style={{fontSize:12,fontWeight:500,color:"#64748b",marginBottom:6}}>Alertas eliminadas del reporte</div>
+          {Object.keys(alertasEliminadas).map((uid,i)=>{
+            const all=[...alertasPorTurno.TM,...alertasPorTurno.TT,...alertasPorTurno.TN];
+            const a=all.find(x=>x.uid===uid);
+            if(!a) return null;
+            return(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                fontSize:11,color:"#94a3b8",padding:"4px 0",borderTop:"1px solid #f1f5f9"}}>
+                <span style={{textDecoration:"line-through"}}>{a.sector} — {a.campo} · {a.dia}</span>
+                <button onClick={()=>restaurarAlerta(uid)}
+                  style={{fontSize:10,border:"1px solid #e2e8f0",borderRadius:4,padding:"2px 6px",
+                    background:"#f8fafc",cursor:"pointer",color:"#185FA5"}}>
+                  Restaurar
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
+
 
 // ─── DASHBOARD DE TENDENCIAS ──────────────────────────────────────────────────
 function Dashboard({monthId,usuario}){
