@@ -368,6 +368,95 @@ function RecorridaForm({recorrida,onChange,readonly}){
   }
 
   // Fotos
+  // ── FOTOS — guardadas en localStorage, referenciadas por ID en Firestore ──
+  function saveFotoLocal(id, dataUrl){
+    try { localStorage.setItem(`sig_foto_${id}`, dataUrl); } catch(e){ console.warn("localStorage lleno",e); }
+  }
+  function getFotoLocal(id){
+    try { return localStorage.getItem(`sig_foto_${id}`)||null; } catch(e){ return null; }
+  }
+  function deleteFotoLocal(id){
+    try { localStorage.removeItem(`sig_foto_${id}`); } catch(e){}
+  }
+
+  function handleFotoCaptura(e){
+    const files=Array.from(e.target.files||[]);
+    if(!files.length) return;
+    files.forEach(file=>{
+      // Comprimir la imagen antes de guardar
+      const reader=new FileReader();
+      reader.onload=ev=>{
+        const img=new Image();
+        img.onload=()=>{
+          // Redimensionar a max 800px manteniendo aspect ratio
+          const MAX=800;
+          let w=img.width, h=img.height;
+          if(w>MAX||h>MAX){ if(w>h){h=Math.round(h*(MAX/w));w=MAX;}else{w=Math.round(w*(MAX/h));h=MAX;} }
+          const canvas=document.createElement("canvas");
+          canvas.width=w; canvas.height=h;
+          const ctx=canvas.getContext("2d");
+          ctx.drawImage(img,0,0,w,h);
+          // Comprimir a JPEG 70%
+          const compressedDataUrl=canvas.toDataURL("image/jpeg",0.7);
+          const id=`foto_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+          // Guardar imagen en localStorage (no en Firestore)
+          saveFotoLocal(id, compressedDataUrl);
+          // Solo guardar metadatos livianos en Firestore
+          const fotoMeta={ id, nombre:file.name, sector:sec.label,
+            timestamp:new Date().toISOString(), w, h };
+          onChange({...recorrida, fotos:[...(recorrida.fotos||[]), fotoMeta]});
+        };
+        img.src=ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value="";
+  }
+
+  function eliminarFoto(id){
+    deleteFotoLocal(id);
+    onChange({...recorrida, fotos:(recorrida.fotos||[]).filter(f=>f.id!==id)});
+  }
+
+  // Componente para mostrar foto (carga desde localStorage)
+  function FotoThumb({foto, onDelete, readonly}){
+    const [src,setSrc]=useState(null);
+    useEffect(()=>{
+      // Intentar cargar desde localStorage
+      const stored=getFotoLocal(foto.id);
+      if(stored){ setSrc(stored); return; }
+      // Si no está en localStorage (otro dispositivo), mostrar placeholder
+      setSrc(null);
+    },[foto.id]);
+    return(
+      <div style={{position:"relative",width:80,height:80}}>
+        {src?(
+          <img src={src} alt="desvío"
+            style={{width:80,height:80,objectFit:"cover",borderRadius:6,border:"1px solid #e2e8f0",cursor:"pointer"}}
+            onClick={()=>{ const a=document.createElement("a"); a.href=src; a.target="_blank"; a.click(); }}/>
+        ):(
+          <div style={{width:80,height:80,borderRadius:6,border:"1px dashed #e2e8f0",
+            background:"#f8fafc",display:"flex",alignItems:"center",justifyContent:"center",
+            flexDirection:"column",gap:2}}>
+            <span style={{fontSize:18}}>📷</span>
+            <span style={{fontSize:8,color:"#94a3b8",textAlign:"center",lineHeight:1.2}}>Solo en este dispositivo</span>
+          </div>
+        )}
+        {!readonly&&(
+          <button onClick={()=>onDelete(foto.id)}
+            style={{position:"absolute",top:-6,right:-6,width:18,height:18,borderRadius:"50%",
+              background:"#E24B4A",color:"#fff",border:"none",cursor:"pointer",
+              fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>
+            ×
+          </button>
+        )}
+        <div style={{fontSize:8,color:"#94a3b8",textAlign:"center",marginTop:2,lineHeight:1.2,maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+          {foto.sector}
+        </div>
+      </div>
+    );
+  }
+
   function handleFotoCaptura(e){
     const files=Array.from(e.target.files||[]);
     if(!files.length) return;
@@ -502,33 +591,23 @@ function RecorridaForm({recorrida,onChange,readonly}){
                 borderStyle:"dashed",color:"#64748b",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               📷 Adjuntar foto de desvío en {sec.label}
             </button>
-            {/* Fotos del sector actual */}
+            {/* Fotos del sector actual — cargadas desde localStorage */}
             {fotos.filter(f=>f.sector===sec.label).length>0&&(
               <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
                 {fotos.filter(f=>f.sector===sec.label).map(foto=>(
-                  <div key={foto.id} style={{position:"relative",width:80,height:80}}>
-                    <img src={foto.dataUrl} alt="desvío"
-                      style={{width:80,height:80,objectFit:"cover",borderRadius:6,border:"1px solid #e2e8f0"}}/>
-                    <button onClick={()=>eliminarFoto(foto.id)}
-                      style={{position:"absolute",top:-6,right:-6,width:18,height:18,borderRadius:"50%",
-                        background:"#E24B4A",color:"#fff",border:"none",cursor:"pointer",
-                        fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>
-                      ×
-                    </button>
-                  </div>
+                  <FotoThumb key={foto.id} foto={foto} onDelete={eliminarFoto} readonly={false}/>
                 ))}
               </div>
             )}
           </div>
         )}
-        {/* Fotos en modo lectura */}
+        {/* Fotos en modo lectura — cargadas desde localStorage */}
         {readonly&&fotos.filter(f=>f.sector===sec.label).length>0&&(
           <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid #f1f5f9"}}>
-            <div style={{fontSize:11,color:"#64748b",marginBottom:6}}>📷 Fotos adjuntas</div>
+            <div style={{fontSize:11,color:"#64748b",marginBottom:6}}>📷 Fotos adjuntas ({fotos.filter(f=>f.sector===sec.label).length})</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
               {fotos.filter(f=>f.sector===sec.label).map(foto=>(
-                <img key={foto.id} src={foto.dataUrl} alt="desvío"
-                  style={{width:80,height:80,objectFit:"cover",borderRadius:6,border:"1px solid #e2e8f0"}}/>
+                <FotoThumb key={foto.id} foto={foto} onDelete={null} readonly={true}/>
               ))}
             </div>
           </div>
@@ -562,14 +641,33 @@ function DayView({monthId,weekIdx,dayIdx,usuario,onBack}){
     return()=>unsub();
   },[path]);
 
+  // Sanitizar antes de guardar: quitar dataUrl de fotos (se guarda en localStorage)
+  function sanitizeForFirestore(reg){
+    const clean={};
+    Object.entries(reg).forEach(([turno,recs])=>{
+      clean[turno]=recs.map(rec=>({
+        ...rec,
+        fotos:(rec.fotos||[]).map(f=>{
+          const {dataUrl,...meta}=f; // strip dataUrl, solo guardar metadatos
+          return meta;
+        })
+      }));
+    });
+    return clean;
+  }
+
   async function saveToFirebase(newReg){
     if(!firebaseOk) return;
     setSaveStatus("saving");
     try{
-      await setDoc(doc(db,path),{registros:newReg},{merge:true});
+      const safe=sanitizeForFirestore(newReg);
+      await setDoc(doc(db,path),{registros:safe},{merge:true});
       setSaveStatus("saved");
       setTimeout(()=>setSaveStatus("idle"),2000);
-    }catch(e){setSaveStatus("error");}
+    }catch(e){
+      console.error("Error guardando en Firebase:",e);
+      setSaveStatus("error");
+    }
   }
 
   function debouncedSave(newReg){
@@ -699,10 +797,13 @@ function DayView({monthId,weekIdx,dayIdx,usuario,onBack}){
 function ResumenSemanal({monthId,weekIdx,usuario}){
   const [diasData,setDiasData]=useState({});
   const [loading,setLoading]=useState(true);
-  const [tabActiva,setTabActiva]=useState("alertas"); // alertas | destildados | reincidencias
+  const [tabActiva,setTabActiva]=useState("alertas");
   const [modoEdicion,setModoEdicion]=useState(false);
-  const [alertasEliminadas,setAlertasEliminadas]=useState({});
-  const [notasEdicion,setNotasEdicion]=useState({});
+  // Estado de edición por tipo y uid
+  const [eliminados,setEliminados]=useState({});       // uid → true
+  const [notas,setNotas]=useState({});                 // uid → string (nota calidad)
+  const [editTexto,setEditTexto]=useState({});          // uid → string (texto modificado)
+  const [editando,setEditando]=useState(null);          // uid actualmente abierto para editar
 
   useEffect(()=>{
     if(!firebaseOk){setLoading(false);return;}
@@ -731,40 +832,46 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
     TURNOS.forEach(turno=>{
       if(usuario.rol!==ROLES.CALIDAD&&usuario.turno!==turno) return;
       (registros[turno]||[]).forEach((rec,ri)=>{
-        const uid=`${turno}_${diIdx}_${ri}`;
+        const base=`${turno}_${diIdx}_${ri}`;
         // Alertas numéricas
         SECTORES.forEach(s=>s.fields.forEach(f=>{
           if(rec.alertas[f.id]){
             const key=`${s.label} — ${f.label}`;
+            const uid=`alerta_${base}_${f.id}`;
             alertaConteo[key]=(alertaConteo[key]||0)+1;
             alertasPorTurno[turno].push({
-              uid:`${uid}_${f.id}`,dia:DIAS[diIdx],rec:ri+1,sector:s.label,
-              campo:f.label,msg:f.al?.msg||"",valor:rec.datos[f.id]||"",
-              responsable:rec.responsable,hora:rec.hora
+              uid,key,dia:DIAS[diIdx],rec:ri+1,sector:s.label,campo:f.label,
+              msg:f.al?.msg||"",valor:rec.datos[f.id]||"",
+              responsable:rec.responsable,hora:rec.hora,turno
             });
-            // Reincidencias globales
             if(!reincidencias[key]) reincidencias[key]={count:0,instancias:[]};
             reincidencias[key].count++;
-            reincidencias[key].instancias.push({turno,dia:DIAS[diIdx],rec:ri+1,valor:rec.datos[f.id]||"",responsable:rec.responsable,hora:rec.hora});
+            reincidencias[key].instancias.push({
+              uid,turno,dia:DIAS[diIdx],rec:ri+1,
+              valor:rec.datos[f.id]||"",responsable:rec.responsable,hora:rec.hora
+            });
           }
         }));
         // Observaciones
         SECTORES.forEach(s=>s.fields.forEach(f=>{
           if(f.type==="ob"&&rec.datos[f.id]&&rec.datos[f.id].trim()){
-            obsPorTurno[turno].push({uid:`${uid}_${f.id}_ob`,dia:DIAS[diIdx],rec:ri+1,sector:s.label,
-              texto:rec.datos[f.id].trim(),responsable:rec.responsable,hora:rec.hora});
+            const uid=`obs_${base}_${f.id}`;
+            obsPorTurno[turno].push({
+              uid,dia:DIAS[diIdx],rec:ri+1,sector:s.label,
+              texto:rec.datos[f.id].trim(),responsable:rec.responsable,hora:rec.hora,turno
+            });
           }
         }));
-        // Ítems destildados (checklist sin marcar)
+        // Ítems destildados
         SECTORES.forEach(s=>s.fields.forEach(f=>{
           if(f.type==="ck"){
             const arr=rec.datos[f.id]||[];
             f.items.forEach((item,ix)=>{
               if(!arr[ix]){
+                const uid=`dest_${base}_${f.id}_${ix}`;
                 destildadosPorTurno[turno].push({
-                  uid:`${uid}_${f.id}_${ix}`,dia:DIAS[diIdx],rec:ri+1,
-                  sector:s.label,checklist:f.label,item,
-                  responsable:rec.responsable,hora:rec.hora
+                  uid,dia:DIAS[diIdx],rec:ri+1,sector:s.label,
+                  checklist:f.label,item,responsable:rec.responsable,hora:rec.hora,turno
                 });
               }
             });
@@ -779,80 +886,182 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
   const turnosVisibles=TURNOS.filter(t=>usuario.rol===ROLES.CALIDAD||usuario.turno===t);
 
   // Filtrar eliminados
-  const alsFiltradas=(turno)=>alertasPorTurno[turno].filter(a=>!alertasEliminadas[a.uid]);
-  const destFiltrados=(turno)=>destildadosPorTurno[turno];
+  const alsFiltradas=(turno)=>alertasPorTurno[turno].filter(a=>!eliminados[a.uid]);
+  const obsFiltradas=(turno)=>obsPorTurno[turno].filter(o=>!eliminados[o.uid]);
+  const destFiltrados=(turno)=>destildadosPorTurno[turno].filter(d=>!eliminados[d.uid]);
+  const reincFiltradas=reincList.map(([key,v])=>({
+    key,count:v.count,
+    instancias:v.instancias.filter(i=>!eliminados[i.uid])
+  })).filter(r=>r.instancias.length>0);
+
   const totalAlertas=turnosVisibles.reduce((s,t)=>s+alsFiltradas(t).length,0);
-  const totalObs=turnosVisibles.reduce((s,t)=>s+obsPorTurno[t].length,0);
+  const totalObs=turnosVisibles.reduce((s,t)=>s+obsFiltradas(t).length,0);
   const totalDest=turnosVisibles.reduce((s,t)=>s+destFiltrados(t).length,0);
 
-  function eliminarAlerta(uid){ setAlertasEliminadas(p=>({...p,[uid]:true})); }
-  function restaurarAlerta(uid){ setAlertasEliminadas(p=>{const n={...p};delete n[uid];return n;}); }
-  function setNota(uid,val){ setNotasEdicion(p=>({...p,[uid]:val})); }
+  // ── Acciones de edición ──
+  function eliminar(uid){ setEliminados(p=>({...p,[uid]:true})); setEditando(null); }
+  function restaurar(uid){ setEliminados(p=>{const n={...p};delete n[uid];return n;}); }
+  function setNota(uid,val){ setNotas(p=>({...p,[uid]:val})); }
+  function iniciarEdicion(uid,textoInicial){ setEditTexto(p=>({...p,[uid]:textoInicial})); setEditando(uid); }
+  function guardarEdicion(uid){ setEditando(null); }
+  function cancelarEdicion(){ setEditando(null); }
 
+  // ── Tarjeta de edición reutilizable ──
+  function BotonesEdicion({uid, textoOriginal=""}){
+    if(!modoEdicion||usuario.rol!==ROLES.CALIDAD) return null;
+    const estaEditando=editando===uid;
+    return(
+      <div style={{display:"flex",gap:5,marginTop:6,flexWrap:"wrap"}}>
+        {estaEditando?(
+          <>
+            <button onClick={()=>guardarEdicion(uid)}
+              style={{fontSize:10,padding:"3px 8px",border:"1px solid #1D9E75",borderRadius:5,
+                background:"#E1F5EE",color:"#085041",cursor:"pointer"}}>
+              ✓ Guardar nota
+            </button>
+            <button onClick={cancelarEdicion}
+              style={{fontSize:10,padding:"3px 8px",border:"1px solid #e2e8f0",borderRadius:5,
+                background:"#f8fafc",color:"#64748b",cursor:"pointer"}}>
+              Cancelar
+            </button>
+          </>
+        ):(
+          <>
+            <button onClick={()=>iniciarEdicion(uid, notas[uid]||"")}
+              style={{fontSize:10,padding:"3px 8px",border:"1px solid #185FA5",borderRadius:5,
+                background:"#E6F1FB",color:"#185FA5",cursor:"pointer"}}>
+              ✏ Agregar nota
+            </button>
+            <button onClick={()=>eliminar(uid)}
+              style={{fontSize:10,padding:"3px 8px",border:"1px solid #E24B4A",borderRadius:5,
+                background:"#FCEBEB",color:"#E24B4A",cursor:"pointer"}}>
+              🗑 Eliminar
+            </button>
+          </>
+        )}
+        {estaEditando&&(
+          <textarea value={editTexto[uid]||""} onChange={e=>setEditTexto(p=>({...p,[uid]:e.target.value}))}
+            onBlur={()=>setNota(uid, editTexto[uid]||"")}
+            placeholder="Escribí una nota de calidad..."
+            style={{...S.inp(false),height:48,resize:"none",fontSize:11,
+              background:"#fff",marginTop:4,width:"100%"}}/>
+        )}
+        {!estaEditando&&notas[uid]&&(
+          <div style={{fontSize:11,color:"#185FA5",fontStyle:"italic",width:"100%",marginTop:2}}>
+            📝 {notas[uid]}
+            <button onClick={()=>iniciarEdicion(uid,notas[uid])}
+              style={{fontSize:9,marginLeft:6,border:"none",background:"none",color:"#185FA5",cursor:"pointer",textDecoration:"underline"}}>
+              editar
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Exportar TXT completo ──
   function exportar(){
-    let t=`RESUMEN SEMANAL — SEMANA ${weekIdx+1}\nMes: ${monthId} | Generado: ${new Date().toLocaleDateString("es-AR")}\n${"=".repeat(55)}\n\n`;
-    t+=`TOTALES: ${totalAlertas} alertas | ${totalObs} observaciones | ${totalDest} ítems destildados\n\n`;
+    let t=`RESUMEN SEMANAL — SEMANA ${weekIdx+1}\n`;
+    t+=`Mes: ${monthId} | Generado: ${new Date().toLocaleDateString("es-AR")} ${new Date().toLocaleTimeString("es-AR")}\n`;
+    t+=`${"=".repeat(55)}\n\n`;
+    t+=`TOTALES: ${totalAlertas} alertas | ${totalObs} observaciones | ${totalDest} ítems destildados | ${reincFiltradas.length} reincidencias\n\n`;
+
     // Ranking
     t+=`${"─".repeat(40)}\nRANKING DE ALERTAS\n${"─".repeat(40)}\n`;
     ranking.length===0?t+="Sin alertas.\n":ranking.forEach((r,i)=>{t+=`${i+1}. ${r.key}: ${r.count}x\n`;});
     t+="\n";
+
     // Reincidencias
-    if(reincList.length>0){
-      t+=`${"─".repeat(40)}\nREINCIDENCIAS (aparece >1 vez)\n${"─".repeat(40)}\n`;
-      reincList.forEach(([key,v])=>{
-        t+=`⚠ ${key} — ${v.count} veces\n`;
-        v.instancias.forEach((ins,i)=>{t+=`  ${i+1}. ${ins.turno} · ${ins.dia} · Rec.${ins.rec} · ${ins.hora} · ${ins.responsable}${ins.valor?` · Valor: ${ins.valor}`:""}\n`;});
+    if(reincFiltradas.length>0){
+      t+=`${"─".repeat(40)}\nREINCIDENCIAS\n${"─".repeat(40)}\n`;
+      reincFiltradas.forEach(r=>{
+        t+=`⚠ ${r.key} — ${r.count} veces\n`;
+        r.instancias.forEach((ins,i)=>{
+          t+=`  ${i+1}. ${ins.turno} · ${ins.dia} · Rec.${ins.rec} · ${ins.hora} · ${ins.responsable}${ins.valor?` · Valor: ${ins.valor}`:""}\n`;
+        });
         t+="\n";
       });
     }
+
     // Por turno
     turnosVisibles.forEach(turno=>{
       t+=`${"─".repeat(40)}\nTURNO ${turno}\n${"─".repeat(40)}\n`;
-      const als=alsFiltradas(turno); const obs=obsPorTurno[turno]; const dest=destFiltrados(turno);
+      const als=alsFiltradas(turno);
+      const obs=obsFiltradas(turno);
+      const dest=destFiltrados(turno);
       if(!als.length&&!obs.length&&!dest.length){t+="Sin desvíos.\n\n";return;}
       if(als.length){
         t+=`\nALERTAS (${als.length}):\n`;
         als.forEach((a,i)=>{
-          t+=`  ${i+1}. [${a.dia} · Rec.${a.rec} · ${a.hora}] ${a.sector} — ${a.campo}${a.valor?` (valor: ${a.valor})`:""} · ${a.responsable}\n`;
+          t+=`  ${i+1}. [${a.dia} · Rec.${a.rec} · ${a.hora}] ${a.sector} — ${a.campo}`;
+          if(a.valor) t+=` (valor: ${a.valor})`;
+          t+=` · ${a.responsable}\n`;
           if(a.msg) t+=`     → ${a.msg}\n`;
-          if(notasEdicion[a.uid]) t+=`     📝 Nota calidad: ${notasEdicion[a.uid]}\n`;
+          if(notas[a.uid]) t+=`     📝 Nota calidad: ${notas[a.uid]}\n`;
         });
       }
       if(obs.length){
         t+=`\nOBSERVACIONES (${obs.length}):\n`;
-        obs.forEach((o,i)=>{t+=`  ${i+1}. [${o.dia} · Rec.${o.rec} · ${o.hora}] ${o.sector} · ${o.responsable}\n     "${o.texto}"\n`;});
+        obs.forEach((o,i)=>{
+          t+=`  ${i+1}. [${o.dia} · Rec.${o.rec} · ${o.hora}] ${o.sector} · ${o.responsable}\n`;
+          t+=`     "${editTexto[o.uid]||o.texto}"\n`;
+          if(notas[o.uid]) t+=`     📝 Nota calidad: ${notas[o.uid]}\n`;
+        });
       }
       if(dest.length){
         t+=`\nÍTEMS NO MARCADOS (${dest.length}):\n`;
-        dest.forEach((d,i)=>{t+=`  ${i+1}. [${d.dia} · Rec.${d.rec} · ${d.hora}] ${d.sector} — ${d.checklist}\n     ✗ ${d.item} · ${d.responsable}\n`;});
+        dest.forEach((d,i)=>{
+          t+=`  ${i+1}. [${d.dia} · Rec.${d.rec} · ${d.hora}] ${d.sector} — ${d.checklist}\n`;
+          t+=`     ✗ ${d.item} · ${d.responsable}\n`;
+          if(notas[d.uid]) t+=`     📝 Nota calidad: ${notas[d.uid]}\n`;
+        });
       }
       t+="\n";
     });
+
+    // Eliminados
+    const todosEliminados=Object.keys(eliminados);
+    if(todosEliminados.length>0){
+      t+=`${"─".repeat(40)}\nELIMINADOS DEL REPORTE (${todosEliminados.length})\n${"─".repeat(40)}\n`;
+      t+="(Items removidos del reporte por Calidad)\n\n";
+    }
+
     const b=new Blob([t],{type:"text/plain"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(b);
-    a.download=`resumen_semana${weekIdx+1}_${monthId}.txt`;
+    a.download=`resumen_sem${weekIdx+1}_${monthId}.txt`;
     a.click();
   }
 
-  // ── UI ──
+  // ── RENDER ──
   return(
     <div>
       {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <div style={{fontSize:14,fontWeight:500}}>Resumen — Semana {weekIdx+1}</div>
-        <div style={{display:"flex",gap:6}}>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
           {usuario.rol===ROLES.CALIDAD&&(
             <button onClick={()=>setModoEdicion(p=>!p)}
-              style={{...S.btnSm(modoEdicion),padding:"6px 10px",fontSize:12,
-                borderColor:modoEdicion?"#185FA5":"#e2e8f0",
-                background:modoEdicion?"#E6F1FB":"#f8fafc",color:modoEdicion?"#185FA5":"#64748b"}}>
-              {modoEdicion?"✓ Edición ON":"✏ Editar"}
+              style={{padding:"6px 10px",fontSize:11,borderRadius:7,cursor:"pointer",
+                border:`1px solid ${modoEdicion?"#185FA5":"#e2e8f0"}`,
+                background:modoEdicion?"#185FA5":"#f8fafc",
+                color:modoEdicion?"#E6F1FB":"#64748b",fontWeight:modoEdicion?500:400}}>
+              {modoEdicion?"✓ Editando":"✏ Editar"}
             </button>
           )}
-          <button onClick={exportar} style={{...S.btn(false,false),padding:"6px 12px",fontSize:12}}>↓ .txt</button>
+          <button onClick={exportar}
+            style={{...S.btn(false,false),padding:"6px 10px",fontSize:11}}>
+            ↓ .txt
+          </button>
         </div>
       </div>
+
+      {modoEdicion&&(
+        <div style={{background:"#E6F1FB",border:"1px solid #85B7EB",borderRadius:8,
+          padding:"8px 12px",marginBottom:12,fontSize:11,color:"#0C447C"}}>
+          ✏ Modo edición activo — podés agregar notas o eliminar cualquier ítem de todos los apartados. Los cambios aplican al reporte exportado.
+        </div>
+      )}
 
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:12}}>
@@ -860,11 +1069,11 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
           ["Alertas",totalAlertas,totalAlertas>0?"#FCEBEB":"#E1F5EE",totalAlertas>0?"#A32D2D":"#085041"],
           ["Obs.",totalObs,totalObs>0?"#FAEEDA":"#E1F5EE",totalObs>0?"#633806":"#085041"],
           ["Destild.",totalDest,totalDest>0?"#f1f5f9":"#E1F5EE",totalDest>0?"#475569":"#085041"],
-          ["Reinc.",reincList.length,reincList.length>0?"#FCEBEB":"#E1F5EE",reincList.length>0?"#A32D2D":"#085041"],
+          ["Reinc.",reincFiltradas.length,reincFiltradas.length>0?"#FCEBEB":"#E1F5EE",reincFiltradas.length>0?"#A32D2D":"#085041"],
         ].map(([label,val,bg,color])=>(
           <div key={label} style={{background:bg,borderRadius:8,padding:"8px 4px",textAlign:"center"}}>
             <div style={{fontSize:18,fontWeight:500,color}}>{val}</div>
-            <div style={{fontSize:9,color,marginTop:2,lineHeight:1.3}}>{label}</div>
+            <div style={{fontSize:9,color,marginTop:2}}>{label}</div>
           </div>
         ))}
       </div>
@@ -873,8 +1082,9 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
       <div style={{display:"flex",gap:5,marginBottom:12,overflowX:"auto",scrollbarWidth:"none"}}>
         {[
           ["alertas",`⚠ Alertas (${totalAlertas})`],
-          ["destildados",`☐ Destildados (${totalDest})`],
-          ["reincidencias",`🔁 Reinc. (${reincList.length})`],
+          ["observaciones",`📝 Obs. (${totalObs})`],
+          ["destildados",`☐ Destild. (${totalDest})`],
+          ["reincidencias",`🔁 Reinc. (${reincFiltradas.length})`],
           ["ranking","🏆 Ranking"],
         ].map(([id,label])=>(
           <button key={id} onClick={()=>setTabActiva(id)}
@@ -887,78 +1097,114 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
         ))}
       </div>
 
-      {/* TAB: ALERTAS */}
-      {tabActiva==="alertas"&&turnosVisibles.map(turno=>{
-        const als=alsFiltradas(turno); const obs=obsPorTurno[turno];
-        if(!als.length&&!obs.length) return(
-          <div key={turno} style={{...S.card,marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between"}}>
-              <div style={{fontSize:13,fontWeight:500}}>Turno {turno}</div>
-              <span style={S.bok}>✓ Sin alertas</span>
+      {/* ── TAB ALERTAS ── */}
+      {tabActiva==="alertas"&&(
+        <div>
+          {totalAlertas===0&&!modoEdicion&&(
+            <div style={{textAlign:"center",padding:"24px",background:"#E1F5EE",border:"1px solid #5DCAA5",borderRadius:10,color:"#085041",fontSize:13}}>
+              ✓ Sin alertas esta semana
             </div>
-          </div>
-        );
-        return(
-          <div key={turno} style={{...S.card,marginBottom:8}}>
-            <div style={{fontSize:13,fontWeight:500,marginBottom:8}}>
-              Turno {turno}
-              <span style={{fontSize:11,fontWeight:400,color:"#64748b",marginLeft:8}}>
-                {als.length} alerta{als.length!==1?"s":""} · {obs.length} obs.
-              </span>
-            </div>
-            {als.map((a,i)=>(
-              <div key={i} style={{background:"#FCEBEB",border:"1px solid #F09595",borderRadius:6,padding:"7px 10px",marginBottom:4}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6}}>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:12,fontWeight:500,color:"#A32D2D"}}>{a.sector} — {a.campo}</div>
-                    <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
-                      {a.dia} · Rec.{a.rec} · {a.hora} · {a.responsable}
-                      {a.valor&&<span> · Valor: <strong>{a.valor}</strong></span>}
-                    </div>
-                    {a.msg&&<div style={{fontSize:11,color:"#A32D2D",marginTop:2}}>→ {a.msg}</div>}
-                    {/* Nota de edición */}
-                    {modoEdicion?(
-                      <textarea value={notasEdicion[a.uid]||""} onChange={e=>setNota(a.uid,e.target.value)}
-                        placeholder="Agregar nota de calidad (opcional)..."
-                        style={{...S.inp(false),height:40,resize:"none",marginTop:6,fontSize:11,background:"#fff"}}/>
-                    ):notasEdicion[a.uid]?(
-                      <div style={{fontSize:11,color:"#185FA5",marginTop:4,fontStyle:"italic"}}>📝 {notasEdicion[a.uid]}</div>
-                    ):null}
-                  </div>
-                  {modoEdicion&&(
-                    <button onClick={()=>eliminarAlerta(a.uid)}
-                      style={{padding:"3px 8px",fontSize:11,border:"1px solid #E24B4A",borderRadius:5,
-                        background:"#fff",color:"#E24B4A",cursor:"pointer",flexShrink:0}}>
-                      Eliminar
-                    </button>
-                  )}
+          )}
+          {turnosVisibles.map(turno=>{
+            const als=alsFiltradas(turno);
+            if(!als.length) return(
+              <div key={turno} style={{...S.card,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={{fontSize:13,fontWeight:500}}>Turno {turno}</span>
+                  <span style={S.bok}>✓ Sin alertas</span>
                 </div>
               </div>
-            ))}
-            {obs.map((o,i)=>(
-              <div key={i} style={{background:"#FAEEDA",border:"1px solid #f9c74f",borderRadius:6,padding:"7px 10px",marginBottom:4}}>
-                <div style={{fontSize:12,fontWeight:500,color:"#633806"}}>{o.sector}</div>
-                <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{o.dia} · Rec.{o.rec} · {o.hora} · {o.responsable}</div>
-                <div style={{fontSize:12,color:"#1e293b",marginTop:4,fontStyle:"italic"}}>"{o.texto}"</div>
+            );
+            return(
+              <div key={turno} style={{...S.card,marginBottom:8}}>
+                <div style={{fontSize:13,fontWeight:500,marginBottom:8}}>
+                  Turno {turno}
+                  <span style={{fontSize:11,fontWeight:400,color:"#64748b",marginLeft:8}}>
+                    {als.length} alerta{als.length!==1?"s":""}
+                  </span>
+                </div>
+                {als.map((a,i)=>(
+                  <div key={i} style={{background:"#FCEBEB",border:"1px solid #F09595",borderRadius:6,padding:"8px 10px",marginBottom:5}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:12,fontWeight:500,color:"#A32D2D"}}>{a.sector} — {a.campo}</div>
+                        <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
+                          {a.dia} · Rec.{a.rec} · {a.hora} · {a.responsable}
+                          {a.valor&&<span> · Valor: <strong>{a.valor}</strong></span>}
+                        </div>
+                        {a.msg&&<div style={{fontSize:11,color:"#A32D2D",marginTop:2}}>→ {a.msg}</div>}
+                      </div>
+                    </div>
+                    <BotonesEdicion uid={a.uid} textoOriginal={a.msg}/>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+      )}
 
-      {/* TAB: DESTILDADOS */}
+      {/* ── TAB OBSERVACIONES ── */}
+      {tabActiva==="observaciones"&&(
+        <div>
+          {totalObs===0&&(
+            <div style={{textAlign:"center",padding:"24px",background:"#E1F5EE",border:"1px solid #5DCAA5",borderRadius:10,color:"#085041",fontSize:13}}>
+              ✓ Sin observaciones esta semana
+            </div>
+          )}
+          {turnosVisibles.map(turno=>{
+            const obs=obsFiltradas(turno);
+            if(!obs.length) return(
+              <div key={turno} style={{...S.card,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={{fontSize:13,fontWeight:500}}>Turno {turno}</span>
+                  <span style={S.bok}>✓ Sin observaciones</span>
+                </div>
+              </div>
+            );
+            return(
+              <div key={turno} style={{...S.card,marginBottom:8}}>
+                <div style={{fontSize:13,fontWeight:500,marginBottom:8}}>
+                  Turno {turno}
+                  <span style={{fontSize:11,fontWeight:400,color:"#64748b",marginLeft:8}}>{obs.length} observación{obs.length!==1?"es":""}</span>
+                </div>
+                {obs.map((o,i)=>(
+                  <div key={i} style={{background:"#FAEEDA",border:"1px solid #f9c74f",borderRadius:6,padding:"8px 10px",marginBottom:5}}>
+                    <div style={{fontSize:12,fontWeight:500,color:"#633806"}}>{o.sector}</div>
+                    <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{o.dia} · Rec.{o.rec} · {o.hora} · {o.responsable}</div>
+                    {/* Texto editable */}
+                    {modoEdicion&&editando===o.uid?(
+                      <textarea value={editTexto[o.uid]!==undefined?editTexto[o.uid]:o.texto}
+                        onChange={e=>setEditTexto(p=>({...p,[o.uid]:e.target.value}))}
+                        style={{...S.inp(false),height:56,resize:"none",fontSize:12,marginTop:6,width:"100%"}}/>
+                    ):(
+                      <div style={{fontSize:12,color:"#1e293b",marginTop:4,fontStyle:"italic"}}>
+                        "{editTexto[o.uid]!==undefined?editTexto[o.uid]:o.texto}"
+                      </div>
+                    )}
+                    <BotonesEdicion uid={o.uid} textoOriginal={o.texto}/>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── TAB DESTILDADOS ── */}
       {tabActiva==="destildados"&&(
         <div>
-          {totalDest===0?(
+          {totalDest===0&&(
             <div style={{textAlign:"center",padding:"24px",background:"#E1F5EE",border:"1px solid #5DCAA5",borderRadius:10,color:"#085041",fontSize:13}}>
               ✓ Todos los ítems marcados esta semana
             </div>
-          ):turnosVisibles.map(turno=>{
+          )}
+          {turnosVisibles.map(turno=>{
             const dest=destFiltrados(turno);
             if(!dest.length) return(
               <div key={turno} style={{...S.card,marginBottom:8}}>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
-                  <div style={{fontSize:13,fontWeight:500}}>Turno {turno}</div>
+                  <span style={{fontSize:13,fontWeight:500}}>Turno {turno}</span>
                   <span style={S.bok}>✓ Todo marcado</span>
                 </div>
               </div>
@@ -970,18 +1216,17 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
                   <span style={{fontSize:11,fontWeight:400,color:"#64748b",marginLeft:8}}>{dest.length} ítems sin marcar</span>
                 </div>
                 {dest.map((d,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 8px",
+                  <div key={i} style={{display:"flex",flexDirection:"column",padding:"7px 9px",
                     background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:6,marginBottom:4}}>
-                    <span style={{fontSize:14,flexShrink:0,marginTop:1}}>☐</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:12,color:"#1e293b",fontWeight:500}}>{d.item}</div>
-                      <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
-                        {d.sector} · {d.checklist}
-                      </div>
-                      <div style={{fontSize:11,color:"#94a3b8"}}>
-                        {d.dia} · Rec.{d.rec} · {d.hora} · {d.responsable}
+                    <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                      <span style={{fontSize:14,flexShrink:0,marginTop:1}}>☐</span>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:12,color:"#1e293b",fontWeight:500}}>{d.item}</div>
+                        <div style={{fontSize:11,color:"#64748b",marginTop:1}}>{d.sector} · {d.checklist}</div>
+                        <div style={{fontSize:11,color:"#94a3b8"}}>{d.dia} · Rec.{d.rec} · {d.hora} · {d.responsable}</div>
                       </div>
                     </div>
+                    <BotonesEdicion uid={d.uid}/>
                   </div>
                 ))}
               </div>
@@ -990,32 +1235,37 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
         </div>
       )}
 
-      {/* TAB: REINCIDENCIAS */}
+      {/* ── TAB REINCIDENCIAS ── */}
       {tabActiva==="reincidencias"&&(
         <div>
-          {reincList.length===0?(
+          {reincFiltradas.length===0&&(
             <div style={{textAlign:"center",padding:"24px",background:"#E1F5EE",border:"1px solid #5DCAA5",borderRadius:10,color:"#085041",fontSize:13}}>
               ✓ Sin reincidencias esta semana
             </div>
-          ):reincList.map(([key,v],i)=>(
-            <div key={i} style={{...S.card,marginBottom:8,borderLeft:`3px solid ${v.count>=3?"#E24B4A":v.count>=2?"#f97316":"#e2e8f0"}`}}>
+          )}
+          {reincFiltradas.map((r,i)=>(
+            <div key={i} style={{...S.card,marginBottom:8,
+              borderLeft:`3px solid ${r.count>=3?"#E24B4A":r.count>=2?"#f97316":"#e2e8f0"}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:13,fontWeight:500,flex:1}}>{key}</div>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <div style={{fontSize:14,fontWeight:600,
-                    background:v.count>=3?"#FCEBEB":v.count>=2?"#FAEEDA":"#f1f5f9",
-                    color:v.count>=3?"#A32D2D":v.count>=2?"#633806":"#64748b",
+                <div style={{fontSize:13,fontWeight:500,flex:1}}>{r.key}</div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <div style={{fontSize:13,fontWeight:600,
+                    background:r.count>=3?"#FCEBEB":r.count>=2?"#FAEEDA":"#f1f5f9",
+                    color:r.count>=3?"#A32D2D":r.count>=2?"#633806":"#64748b",
                     borderRadius:20,padding:"2px 10px"}}>
-                    {v.count}x
+                    {r.count}x
                   </div>
-                  {v.count>=3&&<span style={{fontSize:10,background:"#FCEBEB",color:"#A32D2D",borderRadius:4,padding:"2px 5px",fontWeight:600}}>CRÍTICO</span>}
-                  {v.count===2&&<span style={{fontSize:10,background:"#FAEEDA",color:"#633806",borderRadius:4,padding:"2px 5px",fontWeight:600}}>ATENCIÓN</span>}
+                  {r.count>=3&&<span style={{fontSize:10,background:"#FCEBEB",color:"#A32D2D",borderRadius:4,padding:"2px 5px",fontWeight:600}}>CRÍTICO</span>}
+                  {r.count===2&&<span style={{fontSize:10,background:"#FAEEDA",color:"#633806",borderRadius:4,padding:"2px 5px",fontWeight:600}}>ATENCIÓN</span>}
                 </div>
               </div>
-              {v.instancias.map((ins,j)=>(
-                <div key={j} style={{fontSize:11,color:"#64748b",padding:"4px 0",borderTop:"1px solid #f1f5f9"}}>
-                  {j+1}. {ins.turno} · {ins.dia} · Rec.{ins.rec} · {ins.hora} · {ins.responsable}
-                  {ins.valor&&<span style={{color:"#A32D2D",fontWeight:500}}> · Valor: {ins.valor}</span>}
+              {r.instancias.map((ins,j)=>(
+                <div key={j} style={{padding:"5px 0",borderTop:"1px solid #f1f5f9"}}>
+                  <div style={{fontSize:11,color:"#64748b"}}>
+                    {j+1}. {ins.turno} · {ins.dia} · Rec.{ins.rec} · {ins.hora} · {ins.responsable}
+                    {ins.valor&&<span style={{color:"#A32D2D",fontWeight:500}}> · Valor: {ins.valor}</span>}
+                  </div>
+                  <BotonesEdicion uid={ins.uid}/>
                 </div>
               ))}
             </div>
@@ -1023,7 +1273,7 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
         </div>
       )}
 
-      {/* TAB: RANKING */}
+      {/* ── TAB RANKING ── */}
       {tabActiva==="ranking"&&(
         <div>
           {ranking.length===0?(
@@ -1034,14 +1284,27 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
             <div style={S.card}>
               <div style={{fontSize:13,fontWeight:500,marginBottom:12}}>🏆 Alertas más frecuentes</div>
               {ranking.map((r,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                  <div style={{width:24,height:24,borderRadius:"50%",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,
-                    background:i===0?"#FFA000":i===1?"#9E9E9E":i===2?"#795548":"#e2e8f0",color:i<3?"#fff":"#64748b"}}>{i+1}</div>
-                  <div style={{flex:1,fontSize:12}}>{r.key}</div>
-                  <div style={{fontSize:12,fontWeight:600,background:"#FCEBEB",color:"#A32D2D",borderRadius:4,padding:"2px 8px",flexShrink:0}}>{r.count}x</div>
-                  <div style={{width:70,height:6,background:"#f1f5f9",borderRadius:3,flexShrink:0}}>
-                    <div style={{height:6,borderRadius:3,background:i===0?"#ef4444":i===1?"#f97316":"#E24B4A",
-                      width:`${Math.round((r.count/ranking[0].count)*100)}%`}}/>
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,
+                  padding:"6px 8px",borderRadius:6,
+                  background:i===0?"#FFF7ED":i===1?"#F8FAFC":i===2?"#FAF5FF":"#fff"}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",flexShrink:0,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontSize:11,fontWeight:700,
+                    background:i===0?"#FFA000":i===1?"#9E9E9E":i===2?"#795548":"#e2e8f0",
+                    color:i<3?"#fff":"#64748b"}}>
+                    {i+1}
+                  </div>
+                  <div style={{flex:1,fontSize:12,color:"#1e293b"}}>{r.key}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    <div style={{width:70,height:6,background:"#f1f5f9",borderRadius:3}}>
+                      <div style={{height:6,borderRadius:3,
+                        background:i===0?"#ef4444":i===1?"#f97316":"#E24B4A",
+                        width:`${Math.round((r.count/ranking[0].count)*100)}%`}}/>
+                    </div>
+                    <div style={{fontSize:12,fontWeight:600,background:"#FCEBEB",
+                      color:"#A32D2D",borderRadius:4,padding:"2px 8px",minWidth:28,textAlign:"center"}}>
+                      {r.count}x
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1050,21 +1313,30 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
         </div>
       )}
 
-      {/* Alertas eliminadas (solo en modo edición) */}
-      {modoEdicion&&Object.keys(alertasEliminadas).length>0&&(
-        <div style={{...S.card,borderColor:"#94a3b8",marginTop:8}}>
-          <div style={{fontSize:12,fontWeight:500,color:"#64748b",marginBottom:6}}>Alertas eliminadas del reporte</div>
-          {Object.keys(alertasEliminadas).map((uid,i)=>{
-            const all=[...alertasPorTurno.TM,...alertasPorTurno.TT,...alertasPorTurno.TN];
-            const a=all.find(x=>x.uid===uid);
-            if(!a) return null;
+      {/* Panel de eliminados — visible solo en modo edición */}
+      {modoEdicion&&Object.keys(eliminados).length>0&&(
+        <div style={{...S.card,borderColor:"#94a3b8",marginTop:12}}>
+          <div style={{fontSize:12,fontWeight:500,color:"#64748b",marginBottom:8}}>
+            🗑 Eliminados del reporte ({Object.keys(eliminados).length})
+          </div>
+          {Object.keys(eliminados).map((uid,i)=>{
+            const all=[
+              ...alertasPorTurno.TM,...alertasPorTurno.TT,...alertasPorTurno.TN,
+              ...obsPorTurno.TM,...obsPorTurno.TT,...obsPorTurno.TN,
+              ...destildadosPorTurno.TM,...destildadosPorTurno.TT,...destildadosPorTurno.TN,
+              ...[].concat(...reincList.map(([,v])=>v.instancias)),
+            ];
+            const item=all.find(x=>x.uid===uid);
+            const label=item?(item.campo||item.texto?.substring(0,40)||item.item||"ítem"):"ítem";
             return(
               <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                fontSize:11,color:"#94a3b8",padding:"4px 0",borderTop:"1px solid #f1f5f9"}}>
-                <span style={{textDecoration:"line-through"}}>{a.sector} — {a.campo} · {a.dia}</span>
-                <button onClick={()=>restaurarAlerta(uid)}
-                  style={{fontSize:10,border:"1px solid #e2e8f0",borderRadius:4,padding:"2px 6px",
-                    background:"#f8fafc",cursor:"pointer",color:"#185FA5"}}>
+                fontSize:11,color:"#94a3b8",padding:"5px 0",borderTop:"1px solid #f1f5f9"}}>
+                <span style={{textDecoration:"line-through",flex:1}}>
+                  {item?.sector||""} {label&&`— ${label}`} {item?.dia?`· ${item.dia}`:""}
+                </span>
+                <button onClick={()=>restaurar(uid)}
+                  style={{fontSize:10,border:"1px solid #185FA5",borderRadius:4,padding:"2px 8px",
+                    background:"#E6F1FB",cursor:"pointer",color:"#185FA5",flexShrink:0,marginLeft:8}}>
                   Restaurar
                 </button>
               </div>
@@ -1076,8 +1348,6 @@ function ResumenSemanal({monthId,weekIdx,usuario}){
   );
 }
 
-
-// ─── DASHBOARD DE TENDENCIAS ──────────────────────────────────────────────────
 function Dashboard({monthId,usuario}){
   const [allData,setAllData]=useState([]);
   const [loading,setLoading]=useState(true);
