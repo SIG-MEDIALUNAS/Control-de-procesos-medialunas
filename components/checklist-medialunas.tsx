@@ -78,8 +78,6 @@ const SECTORES = [
       "Papel de envoltorio con tinta hacia afuera (sin tocar masa)",
       "Tiempo de amasado registrado en planilla"
     ]},
-    { id:"a_reposo", type:"num", label:"Tiempo de reposo en cámara", unit:"hs", ref:"PCC",
-      al:{min:8,max:24,msg:"Mínimo 8 hs — óptimo 12 hs (P280 p.3.8)"} },
     { id:"a_carro",       type:"txt", label:"N° de carro",               unit:"",   ref:"PC" },
     { id:"a_hora_entrada",type:"ti",  label:"Hora de entrada a cámara",  ref:"PC" },
     { id:"a_ob", type:"ob", label:"Observaciones / desvíos" }
@@ -106,7 +104,6 @@ const SECTORES = [
     { id:"l_ob", type:"ob", label:"Observaciones / desvíos" }
   ]},
   { id:"lamauto", label:"Lam. Auto", fields:[
-    { id:"la_vel",    type:"num", label:"Velocidad laminadora",     unit:"rpm", ref:"PC" },
     { id:"la_cal1",   type:"num", label:"Calibre inicial",          unit:"mm",  ref:"PC" },
     { id:"la_cal2",   type:"num", label:"Calibre final",            unit:"mm",  ref:"PC" },
     { id:"la_ancho",  type:"num", label:"Ancho de masa",            unit:"cm",  ref:"PC" },
@@ -150,8 +147,8 @@ const SECTORES = [
   { id:"ferm", label:"Fermentado", fields:[
     { id:"fe_temp", type:"num", label:"T° fermentador",    unit:"°C",  ref:"PCC",
       al:{min:27,max:33,msg:"T° fuera del rango 27°C a 33°C — P280 p.8.4"} },
-    { id:"fe_hr",   type:"num", label:"Humedad relativa",  unit:"%",   ref:"PCC",
-      al:{exact:90,msg:"Debe ser 90% HR — P280 p.8.4"} },
+    { id:"fe_hr",   type:"num", label:"Humedad relativa fermentador", unit:"%", ref:"PCC",
+      al:{min:86,max:90,msg:"Humedad fuera del rango 88% ±2% (86%-90%) — P280 p.8.4"} },
     { id:"fe_tpo",  type:"num", label:"Tiempo fermentado", unit:"min", ref:"PCC",
       al:{exact:60,msg:"Debe ser 60 min — P280 p.8.3"} },
     { id:"fe_ent",  type:"ti",  label:"Hora ingreso carro", ref:"PC" },
@@ -427,41 +424,90 @@ function RecorridaForm({recorrida,onChange,readonly}){
   }
 
   // Componente para mostrar foto (carga desde localStorage)
-  function FotoThumb({foto, onDelete, readonly}){
-    const [src,setSrc]=useState(null);
+  // Visor de foto a pantalla completa (modal)
+  function FotoViewer({src,onClose,sector,hora}){
     useEffect(()=>{
-      // Intentar cargar desde localStorage
-      const stored=getFotoLocal(foto.id);
-      if(stored){ setSrc(stored); return; }
-      // Si no está en localStorage (otro dispositivo), mostrar placeholder
-      setSrc(null);
-    },[foto.id]);
+      const handler=(e)=>{ if(e.key==="Escape") onClose(); };
+      window.addEventListener("keydown",handler);
+      return()=>window.removeEventListener("keydown",handler);
+    },[]);
     return(
-      <div style={{position:"relative",width:80,height:80}}>
-        {src?(
+      <div onClick={onClose}
+        style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",
+          background:"rgba(0,0,0,0.92)",zIndex:9999,display:"flex",flexDirection:"column",
+          alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{width:"100%",maxWidth:500,display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
           <img src={src} alt="desvío"
-            style={{width:80,height:80,objectFit:"cover",borderRadius:6,border:"1px solid #e2e8f0",cursor:"pointer"}}
-            onClick={()=>{ const a=document.createElement("a"); a.href=src; a.target="_blank"; a.click(); }}/>
-        ):(
-          <div style={{width:80,height:80,borderRadius:6,border:"1px dashed #e2e8f0",
-            background:"#f8fafc",display:"flex",alignItems:"center",justifyContent:"center",
-            flexDirection:"column",gap:2}}>
-            <span style={{fontSize:18}}>📷</span>
-            <span style={{fontSize:8,color:"#94a3b8",textAlign:"center",lineHeight:1.2}}>Solo en este dispositivo</span>
+            style={{maxWidth:"100%",maxHeight:"75vh",objectFit:"contain",borderRadius:8}}
+            onClick={e=>e.stopPropagation()}/>
+          <div style={{color:"#fff",fontSize:12,textAlign:"center",opacity:.8}}>
+            📷 {sector}{hora?` · ${hora}`:""}
           </div>
-        )}
-        {!readonly&&(
-          <button onClick={()=>onDelete(foto.id)}
-            style={{position:"absolute",top:-6,right:-6,width:18,height:18,borderRadius:"50%",
-              background:"#E24B4A",color:"#fff",border:"none",cursor:"pointer",
-              fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>
-            ×
-          </button>
-        )}
-        <div style={{fontSize:8,color:"#94a3b8",textAlign:"center",marginTop:2,lineHeight:1.2,maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-          {foto.sector}
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={e=>{e.stopPropagation();
+              const a=document.createElement("a");a.href=src;
+              a.download=`foto_desvio_${Date.now()}.jpg`;a.click();}}
+              style={{padding:"8px 16px",fontSize:12,borderRadius:8,border:"1px solid #fff",
+                background:"transparent",color:"#fff",cursor:"pointer"}}>
+              ↓ Descargar
+            </button>
+            <button onClick={onClose}
+              style={{padding:"8px 16px",fontSize:12,borderRadius:8,border:"none",
+                background:"#E24B4A",color:"#fff",cursor:"pointer"}}>
+              ✕ Cerrar
+            </button>
+          </div>
         </div>
       </div>
+    );
+  }
+
+  function FotoThumb({foto, onDelete, readonly}){
+    const [src,setSrc]=useState(null);
+    const [visor,setVisor]=useState(false);
+    useEffect(()=>{
+      const stored=getFotoLocal(foto.id);
+      setSrc(stored||null);
+    },[foto.id]);
+    return(
+      <>
+        {visor&&src&&<FotoViewer src={src} onClose={()=>setVisor(false)} sector={foto.sector} hora={foto.timestamp?.slice(11,16)}/>}
+        <div style={{position:"relative",width:80}}>
+          {src?(
+            <img src={src} alt="desvío"
+              style={{width:80,height:80,objectFit:"cover",borderRadius:6,
+                border:"2px solid #e2e8f0",cursor:"pointer",display:"block"}}
+              onClick={()=>setVisor(true)}/>
+          ):(
+            <div style={{width:80,height:80,borderRadius:6,border:"1px dashed #e2e8f0",
+              background:"#f8fafc",display:"flex",alignItems:"center",justifyContent:"center",
+              flexDirection:"column",gap:2}}>
+              <span style={{fontSize:18}}>📷</span>
+              <span style={{fontSize:8,color:"#94a3b8",textAlign:"center",lineHeight:1.2}}>Solo este dispositivo</span>
+            </div>
+          )}
+          {src&&(
+            <div onClick={()=>setVisor(true)}
+              style={{position:"absolute",bottom:0,left:0,right:0,
+                background:"rgba(0,0,0,0.45)",borderRadius:"0 0 5px 5px",
+                color:"#fff",fontSize:9,textAlign:"center",padding:"2px 0",cursor:"pointer"}}>
+              🔍 Ver
+            </div>
+          )}
+          {!readonly&&onDelete&&(
+            <button onClick={e=>{e.stopPropagation();onDelete(foto.id);}}
+              style={{position:"absolute",top:-6,right:-6,width:18,height:18,borderRadius:"50%",
+                background:"#E24B4A",color:"#fff",border:"2px solid #fff",cursor:"pointer",
+                fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",padding:0,zIndex:1}}>
+              ×
+            </button>
+          )}
+          <div style={{fontSize:8,color:"#94a3b8",textAlign:"center",marginTop:2,lineHeight:1.2,
+            maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            {foto.sector}
+          </div>
+        </div>
+      </>
     );
   }
 
