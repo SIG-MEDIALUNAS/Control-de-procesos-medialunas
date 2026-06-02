@@ -67,6 +67,7 @@ const SECTORES = [
     { id:"a_frac",  type:"num", label:"Peso fracción de masa",   unit:"kg",  ref:"PCC",
       al:{exact:8,msg:"Debe ser 8 kg — P280 p.3.6"} },
     { id:"a_ck", type:"ck", label:"Verificación de procedimiento (P280 p.3)", items:[
+      "Bandejas limpias disponibles y en uso",
       "Secos cargados con máquina apagada (excepto sal y manteca)",
       "Máquina giró una vuelta en velocidad lenta para integrar secos",
       "Agua del chiller agregada correctamente",
@@ -79,11 +80,13 @@ const SECTORES = [
       "Tiempo de amasado registrado en planilla"
     ]},
     { id:"a_carro",       type:"txt", label:"N° de carro",               unit:"",   ref:"PC" },
-    { id:"a_hora_entrada",type:"ti",  label:"Hora de entrada a cámara",  ref:"PC" },
+    { id:"a_fecha_entrada",type:"txt",label:"Fecha de entrada a cámara", unit:"",   ref:"PC" },
+    { id:"a_hora_entrada", type:"ti", label:"Hora de entrada a cámara",  ref:"PC" },
     { id:"a_ob", type:"ob", label:"Observaciones / desvíos" }
   ]},
   { id:"lam", label:"Laminado", fields:[
     { id:"l_carro",       type:"txt", label:"N° de carro (conecta con amasado)", unit:"", ref:"PC" },
+    { id:"l_fecha_salida",type:"txt", label:"Fecha de salida de cámara",           unit:"", ref:"PC" },
     { id:"l_hora_salida", type:"ti",  label:"Hora de salida de cámara a laminado", ref:"PC" },
     { id:"l_tamb", type:"num", label:"T° ambiente en laminado", unit:"°C", ref:"PCC",
       al:{min:16,max:20,msg:"T° ambiente fuera del rango 16°C a 20°C — P280 p.4.6"} },
@@ -117,10 +120,12 @@ const SECTORES = [
     { id:"la_ob", type:"ob", label:"Observaciones / desvíos" }
   ]},
   { id:"med", label:"Medialunera", fields:[
+    { id:"m_maquinista_nombre", type:"txt", label:"Nombre del maquinista", unit:"", ref:"PC" },
     { id:"m_rec", type:"ck", label:"Recursos en línea", items:[
       "Maquinista presente en línea",
       "N° de identificación colocado en operarias",
-      "N° de carro registrado en planilla"
+      "N° de carro registrado en planilla",
+      "Bandejas limpias disponibles y en uso"
     ]},
     { id:"m_maquina", type:"sel", label:"Medialunera en uso", ref:"PC",
       options:["12mil","1","2","3"] },
@@ -678,31 +683,71 @@ function RecorridaForm({recorrida,onChange,readonly}){
           </div>
         )}
       </div>
-      {/* ── Trazabilidad de carro (panel resumen si hay datos) ── */}
+      {/* ── Trazabilidad de carro con soporte de fechas cruzadas ── */}
       {(datos["a_carro"]||datos["l_carro"])&&(
         <div style={{background:"#E6F1FB",border:"1px solid #85B7EB",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
-          <div style={{fontSize:12,fontWeight:500,color:"#0C447C",marginBottom:6}}>🚗 Trazabilidad del carro</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:11,color:"#185FA5"}}>
-            {datos["a_carro"]&&<div><span style={{color:"#64748b"}}>N° carro (amasado):</span> <strong>{datos["a_carro"]}</strong></div>}
-            {datos["l_carro"]&&<div><span style={{color:"#64748b"}}>N° carro (laminado):</span> <strong>{datos["l_carro"]}</strong></div>}
-            {datos["a_hora_entrada"]&&<div><span style={{color:"#64748b"}}>Entrada cámara:</span> <strong>{datos["a_hora_entrada"]}</strong></div>}
-            {datos["l_hora_salida"]&&<div><span style={{color:"#64748b"}}>Salida cámara:</span> <strong>{datos["l_hora_salida"]}</strong></div>}
-            {datos["a_hora_entrada"]&&datos["l_hora_salida"]&&(()=>{
-              const [h1,m1]=datos["a_hora_entrada"].split(":").map(Number);
-              const [h2,m2]=datos["l_hora_salida"].split(":").map(Number);
-              let diff=(h2*60+m2)-(h1*60+m1);
-              if(diff<0) diff+=1440;
-              const hs=Math.floor(diff/60), mn=diff%60;
-              const ok=diff>=480&&diff<=1440;
-              return(
-                <div style={{gridColumn:"1/-1",marginTop:4,padding:"5px 8px",
-                  background:ok?"#E1F5EE":"#FCEBEB",borderRadius:5,
-                  color:ok?"#085041":"#A32D2D",fontWeight:500}}>
-                  ⏱ Tiempo en cámara: {hs}h {mn}min {ok?"✓ dentro del rango":"⚠ fuera del rango (8-24 hs)"}
-                </div>
-              );
-            })()}
+          <div style={{fontSize:12,fontWeight:500,color:"#0C447C",marginBottom:8}}>🚗 Trazabilidad del carro</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:11}}>
+            {/* Entrada — Amasado */}
+            <div style={{background:"#fff",borderRadius:6,padding:"6px 8px",border:"1px solid #bfdbfe"}}>
+              <div style={{fontSize:10,color:"#64748b",marginBottom:3,fontWeight:500}}>📥 AMASADO → CÁMARA</div>
+              {datos["a_carro"]&&<div><span style={{color:"#64748b"}}>Carro:</span> <strong style={{color:"#0C447C"}}>{datos["a_carro"]}</strong></div>}
+              {datos["a_fecha_entrada"]&&<div style={{marginTop:2}}><span style={{color:"#64748b"}}>Fecha:</span> <strong style={{color:"#0C447C"}}>{datos["a_fecha_entrada"]}</strong></div>}
+              {datos["a_hora_entrada"]&&<div style={{marginTop:2}}><span style={{color:"#64748b"}}>Hora:</span> <strong style={{color:"#0C447C"}}>{datos["a_hora_entrada"]}</strong></div>}
+              {!datos["a_carro"]&&!datos["a_fecha_entrada"]&&!datos["a_hora_entrada"]&&<div style={{color:"#94a3b8",fontSize:10}}>Sin datos de entrada</div>}
+            </div>
+            {/* Salida — Laminado */}
+            <div style={{background:"#fff",borderRadius:6,padding:"6px 8px",border:"1px solid #bfdbfe"}}>
+              <div style={{fontSize:10,color:"#64748b",marginBottom:3,fontWeight:500}}>📤 CÁMARA → LAMINADO</div>
+              {datos["l_carro"]&&<div><span style={{color:"#64748b"}}>Carro:</span> <strong style={{color:"#0C447C"}}>{datos["l_carro"]}</strong></div>}
+              {datos["l_fecha_salida"]&&<div style={{marginTop:2}}><span style={{color:"#64748b"}}>Fecha:</span> <strong style={{color:"#0C447C"}}>{datos["l_fecha_salida"]}</strong></div>}
+              {datos["l_hora_salida"]&&<div style={{marginTop:2}}><span style={{color:"#64748b"}}>Hora:</span> <strong style={{color:"#0C447C"}}>{datos["l_hora_salida"]}</strong></div>}
+              {!datos["l_carro"]&&!datos["l_fecha_salida"]&&!datos["l_hora_salida"]&&<div style={{color:"#94a3b8",fontSize:10}}>Sin datos de salida</div>}
+            </div>
           </div>
+          {/* Cálculo tiempo total — soporta días distintos */}
+          {datos["a_hora_entrada"]&&datos["l_hora_salida"]&&(()=>{
+            function parseDateTime(fecha,hora){
+              if(!hora) return null;
+              const [h,m]=hora.split(":").map(Number);
+              if(fecha){
+                const parts=fecha.split("/");
+                if(parts.length===3){
+                  const d=new Date(2000+parseInt(parts[2]),parseInt(parts[1])-1,parseInt(parts[0]),h,m);
+                  return d.getTime();
+                }
+              }
+              return h*60+m; // fallback sin fecha
+            }
+            const t1=parseDateTime(datos["a_fecha_entrada"],datos["a_hora_entrada"]);
+            const t2=parseDateTime(datos["l_fecha_salida"],datos["l_hora_salida"]);
+            if(!t1||!t2) return null;
+            let diffMin;
+            if(typeof t1==="number"&&typeof t2==="number"&&t1>1000){
+              diffMin=Math.round((t2-t1)/60000);
+            } else {
+              diffMin=t2-t1;
+              if(diffMin<0) diffMin+=1440;
+            }
+            if(diffMin<0) return null;
+            const hs=Math.floor(diffMin/60), mn=diffMin%60;
+            const ok=diffMin>=480&&diffMin<=1440;
+            const diasStr=hs>=24?` (${Math.floor(hs/24)}d ${hs%24}h ${mn}min)`:``;
+            return(
+              <div style={{marginTop:8,padding:"7px 10px",
+                background:ok?"#E1F5EE":"#FCEBEB",borderRadius:6,
+                color:ok?"#085041":"#A32D2D",fontWeight:500,fontSize:12,
+                display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:16}}>⏱</span>
+                <div>
+                  <div>Tiempo en cámara: <strong>{hs}h {mn}min{diasStr}</strong></div>
+                  <div style={{fontSize:10,fontWeight:400,marginTop:1}}>
+                    {ok?"✓ Dentro del rango (8-24 hs)":"⚠ Fuera del rango establecido (8-24 hs)"}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -802,6 +847,14 @@ function DayView({monthId,weekIdx,dayIdx,usuario,onBack}){
     debouncedSave(newReg);
   }
 
+  function eliminarRecorrida(turno,idx){
+    if(!window.confirm(`¿Eliminar Recorrida ${idx+1} del turno ${turno}? Esta acción no se puede deshacer.`)) return;
+    const tRecs=(registros[turno]||[]).filter((_,i)=>i!==idx);
+    const newReg={...registros,[turno]:tRecs};
+    setRegistros(newReg);
+    debouncedSave(newReg);
+  }
+
   const allAlertas=[];
   Object.entries(registros).forEach(([turno,recs])=>recs.forEach((r,i)=>{
     SECTORES.forEach(s=>s.fields.forEach(f=>{
@@ -873,16 +926,26 @@ function DayView({monthId,weekIdx,dayIdx,usuario,onBack}){
         (registros[turnoActivo]||[]).map((rec,i)=>{
           const als=countAlertasRec(rec);
           return(
-            <div key={i} onClick={()=>setRecActiva({turno:turnoActivo,idx:i})}
-              style={{...S.card,cursor:"pointer",padding:"10px 12px",borderColor:als>0?"#F09595":"#5DCAA5",marginBottom:6}}>
+            <div key={i} style={{...S.card,padding:"10px 12px",borderColor:als>0?"#F09595":"#5DCAA5",marginBottom:6}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <div style={{fontSize:13,fontWeight:500}}>Recorrida {i+1}</div>
+                <div onClick={()=>setRecActiva({turno:turnoActivo,idx:i})}
+                  style={{fontSize:13,fontWeight:500,cursor:"pointer",flex:1}}>
+                  Recorrida {i+1}
+                </div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {(rec.fotos||[]).length>0&&<span style={{fontSize:11,color:"#64748b"}}>📷 {rec.fotos.length}</span>}
                   {als>0?<span style={S.ber}>{als} alerta{als>1?"s":""}</span>:<span style={S.bok}>✓ Sin alertas</span>}
+                  {(usuario.rol===ROLES.CALIDAD||rec.responsable===usuario.nombre)&&(
+                    <button onClick={e=>{e.stopPropagation();eliminarRecorrida(turnoActivo,i);}}
+                      style={{fontSize:11,padding:"2px 7px",border:"1px solid #F09595",borderRadius:5,
+                        background:"#FCEBEB",color:"#A32D2D",cursor:"pointer",flexShrink:0}}>
+                      🗑
+                    </button>
+                  )}
                 </div>
               </div>
-              <div style={{fontSize:11,color:"#64748b"}}>
+              <div onClick={()=>setRecActiva({turno:turnoActivo,idx:i})}
+                style={{fontSize:11,color:"#64748b",cursor:"pointer"}}>
                 🕐 {rec.hora} · 👤 {rec.responsable}
                 {rec.lote&&<span> · Lote: {rec.lote}</span>}
                 <span> · {rec.tipo==="m"?"Manteca":"Grasa"}</span>
