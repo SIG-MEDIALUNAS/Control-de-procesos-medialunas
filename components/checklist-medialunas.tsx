@@ -1,10 +1,9 @@
 "use client";
 // ═══════════════════════════════════════════════════════════════
-// CONTROL VOLANTE — SABORES EXPRESS · v6.0
-// Registros persistentes en Firebase (independiente de deploy)
-// Módulo Temperaturas (Medialunas/Panificados), Medialunas (pesos),
-// BPM por incumplimiento, Recepción con BD proveedores,
-// Despacho con chofer/patente, KPIs de cámaras y ambiente.
+// CONTROL VOLANTE — SABORES EXPRESS · v8.0
+// Proceso unificado P280/P276 — sin duplicación de datos
+// Trazabilidad fija de carros (path estable en Firebase)
+// KPIs PCC por etapa + KPI Auditoría Interna con gráfico
 // ═══════════════════════════════════════════════════════════════
 import React,{useState,useEffect,useRef,useCallback}from"react";
 import{initializeApp,getApps}from"firebase/app";
@@ -108,6 +107,29 @@ type Reg=RTemp|RMedialunas|RBPM|RRecep|RDesp|RNC|RDecom|RLimp|RPesos;
 // Proveedor BD
 interface Proveedor{id:string;nombre:string;cuit:string;contacto:string;productos:string;activo:boolean;}
 
+// Auditoría interna
+interface RAuditoria{
+  id:string;fecha:string;hora:string;responsable:string;turno:Turno;
+  // Puntajes por sector (0-100)
+  pct_recepcion:string;pct_amasado:string;pct_laminado:string;pct_medialunera:string;
+  pct_fermentador:string;pct_abatidor:string;pct_envasado:string;pct_camara_pt:string;pct_bpm:string;pct_limpieza:string;
+  pct_total:number;
+  observaciones:string;
+  acciones:string;
+}
+
+// Trazabilidad de carro — path FIJO independiente de versión
+// cv_carros/{num_carro} — documento único por carro, se actualiza en cada etapa
+interface TrazCarro{
+  num_carro:string;variedad:string;lote_harina:string;
+  // Etapas con timestamp fijo
+  etapas:TrazEtapa[];
+  ultimo_update:string;
+}
+interface TrazEtapa{
+  etapa:string;fecha:string;hora:string;operario:string;turno:Turno;datos:Record<string,string>;
+}
+
 // ── CALENDARIO ────────────────────────────────────────────────
 const MN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const DN=["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
@@ -144,6 +166,28 @@ async function loadProveedores():Promise<Proveedor[]>{
 }
 async function saveProveedor(p:Proveedor){await setDoc(doc(db,"cv_proveedores",p.id),p);}
 async function deleteProveedor(id:string){await deleteDoc(doc(db,"cv_proveedores",id));}
+
+// ── AUDITORÍAS — path fijo ────────────────────────────────────
+async function saveAuditoria(a:RAuditoria){await setDoc(doc(db,`cv_auditorias/${a.fecha}_${a.id}`),a as unknown as Record<string,unknown>);}
+async function loadAuditorias(desde:string,hasta:string):Promise<RAuditoria[]>{
+  try{const s=await getDocs(collection(db,"cv_auditorias"));
+    return s.docs.map(d=>d.data() as RAuditoria).filter(a=>a.fecha>=desde&&a.fecha<=hasta).sort((a,b)=>b.fecha.localeCompare(a.fecha));}catch{return[];}}
+
+// ── TRAZABILIDAD CARROS — path fijo (cv_carros/) ─────────────
+async function saveTrazCarro(t:TrazCarro){await setDoc(doc(db,`cv_carros/${t.num_carro}`),t as unknown as Record<string,unknown>);}
+async function loadTrazCarro(num:string):Promise<TrazCarro|null>{
+  try{const d=await getDoc(doc(db,`cv_carros/${num}`));return d.exists()?d.data() as TrazCarro:null;}catch{return null;}}
+async function loadTrazCarrosSemana(fechaDesde:string,fechaHasta:string):Promise<TrazCarro[]>{
+  try{const s=await getDocs(collection(db,"cv_carros"));
+    return s.docs.map(d=>d.data() as TrazCarro).filter(c=>{
+      const ultima=c.etapas[c.etapas.length-1]?.fecha||"";
+      return ultima>=fechaDesde&&ultima<=fechaHasta;
+    }).sort((a,b)=>b.ultimo_update.localeCompare(a.ultimo_update));}catch{return[];}}
+async function agregarEtapaCarro(num_carro:string,etapa:TrazEtapa,variedad:string,lote:string){
+  const prev=await loadTrazCarro(num_carro)||{num_carro,variedad,lote_harina:lote,etapas:[],ultimo_update:""};
+  const etapas=[...prev.etapas.filter(e=>e.etapa!==etapa.etapa),etapa];
+  await saveTrazCarro({...prev,etapas,ultimo_update:new Date().toISOString()});
+}
 
 // ── HELPERS ───────────────────────────────────────────────────
 const hoy=()=>new Date().toISOString().split("T")[0];
@@ -280,9 +324,9 @@ function Fotos({fotos,onAdd,onRemove}:{fotos:FotoMeta[];onAdd:(m:FotoMeta)=>void
 }
 function FW({titulo,sub,onCancel,onSave,g,ch}:{titulo:string;sub:string;onCancel:()=>void;onSave:()=>void;g:boolean;ch:React.ReactNode}){return<div className="flex flex-col min-h-screen"><div className="flex items-center gap-3 p-4 border-b border-gray-100 bg-white sticky top-0 z-10"><button onClick={onCancel} className="text-gray-400 p-1 text-lg">←</button><div className="flex-1"><div className="font-semibold text-gray-800 text-sm">{titulo}</div><div className="text-xs text-gray-400">{sub}</div></div></div><div className="flex-1 p-4 flex flex-col gap-4 pb-28">{ch}</div><div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 flex gap-3 max-w-lg mx-auto"><button onClick={onCancel} className="flex-1 h-11 rounded-xl border border-gray-200 text-sm text-gray-600 font-medium">Cancelar</button><button onClick={onSave} disabled={g} className="flex-[2] h-11 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold text-sm flex items-center justify-center gap-2">{g?<Spin/>:"Guardar ✓"}</button></div></div>;}
 
-// ── FORM TEMPERATURAS — Solo Cámaras ─────────────────────────
-// v6: Temperaturas registra exclusivamente cámaras.
-// El proceso de amasado, laminado, fermentador, etc. se unificó en FMedialunas.
+// ── FORM TEMPERATURAS — Sólo Cámaras y Ambiente ──────────────
+// Único lugar donde se registran T° de cámaras (masas, PT, ambiente).
+// El proceso de amasado/fermentador/abatidor va en FMedialunas por etapa.
 function FTemp({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCancel:()=>void}){
   const[d,sD]=useState({
     t_camara_masas:"",t_ambiente:"",t_camara_pt:"",
@@ -294,56 +338,64 @@ function FTemp({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCancel:()=>
   const aCamaraPT=d.t_camara_pt!==""&&(parseFloat(d.t_camara_pt)<-25||parseFloat(d.t_camara_pt)>-17);
 
   async function sv(){sG(true);
-    onSave({id:gid("tmp"),tipo:"temperaturas",area:"medialunas",turno:u.turno,responsable:u.nombre,fecha:hoy(),hora:ahora(),timestamp:new Date().toISOString(),
+    onSave({id:gid("tmp"),tipo:"temperaturas",area:"general",turno:u.turno,responsable:u.nombre,fecha:hoy(),hora:ahora(),timestamp:new Date().toISOString(),
       alertas:{t_camara_masas_nc:aCamaraMasas,t_ambiente_nc:aAmbiente,t_camara_pt_nc:aCamaraPT},
       ...d} as unknown as Reg);
     sG(false);}
 
-  return<FW titulo="🌡️ Temperaturas — Cámaras" sub="PCC · Control de cámaras" onCancel={onCancel} onSave={sv} g={g} ch={<>
-    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700">
-      Registro exclusivo de temperaturas de cámaras. El proceso de amasado y elaboración se registra en <b>🥐 Medialunas</b>.
+  return<FW titulo="🌡️ Temperaturas — Cámaras" sub="PCC · Registro único de cámaras" onCancel={onCancel} onSave={sv} g={g} ch={<>
+    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700 leading-relaxed">
+      <b>Datos únicos de cámaras.</b> Registrá una sola vez por turno. Las temperaturas de proceso (fermentador, abatidor) se cargan dentro de <b>🥐 Medialunas</b> en cada etapa correspondiente.
     </div>
-    <SecH label="🏭 Cámaras" color="text-blue-700"/>
-    <Num label="T° cámara de Masas/Fraccionado (°C)" spec="Parámetro: 8°C ±2°C" value={d.t_camara_masas} onChange={v=>sD(p=>({...p,t_camara_masas:v}))} al={aCamaraMasas}/>
-    <Num label="T° ambiente (°C)" spec="Parámetro: 16°C a 20°C" value={d.t_ambiente} onChange={v=>sD(p=>({...p,t_ambiente:v}))} al={aAmbiente}/>
-    <Num label="T° cámara de PT (°C)" spec="Parámetro: -21°C ±4°C" value={d.t_camara_pt} onChange={v=>sD(p=>({...p,t_camara_pt:v}))} al={aCamaraPT}/>
-    <Txt label="N° termómetro / equipo" value={d.equipo_num} onChange={v=>sD(p=>({...p,equipo_num:v}))}/>
+
+    <SecH label="🏭 PCC — Cámaras" color="text-blue-700"/>
+    <Num label="T° cámara de Masas / Fraccionado (°C)" spec="PCC · Parámetro: 8°C ±2°C  →  6°C a 10°C" value={d.t_camara_masas} onChange={v=>sD(p=>({...p,t_camara_masas:v}))} al={aCamaraMasas}/>
+    {aCamaraMasas&&<div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">⚠ PCC fuera de rango — verificar equipo y registrar NC</div>}
+
+    <Num label="T° ambiente (°C)" spec="PC · Parámetro: 16°C a 20°C" value={d.t_ambiente} onChange={v=>sD(p=>({...p,t_ambiente:v}))} al={aAmbiente}/>
+    {aAmbiente&&<div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-700">⚠ T° ambiente fuera de rango — impacta en laminado y fermentado</div>}
+
+    <Num label="T° cámara de PT (°C)" spec="PCC · Parámetro: -21°C ±4°C  →  -17°C a -25°C" value={d.t_camara_pt} onChange={v=>sD(p=>({...p,t_camara_pt:v}))} al={aCamaraPT}/>
+    {aCamaraPT&&<div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">⚠ PCC fuera de rango — cadena de frío comprometida</div>}
+
+    <Txt label="N° termómetro / equipo calibrado" value={d.equipo_num} onChange={v=>sD(p=>({...p,equipo_num:v}))} ph="ej: TM-03"/>
     <Fotos fotos={d.fotos} onAdd={f=>sD(p=>({...p,fotos:[...p.fotos,f]}))} onRemove={id=>sD(p=>({...p,fotos:p.fotos.filter(f=>f.id!==id)}))}/>
     <TA label="Observaciones / acción correctiva" value={d.observaciones} onChange={v=>sD(p=>({...p,observaciones:v}))}/>
   </>}/>;
 }
 
-// ── FORM MEDIALUNAS (pesos + proceso completo) ────────────────
+// ── FORM MEDIALUNAS — Proceso completo P280/P276 ─────────────
+// Estructura: 1-Amasado → 2-Cámara → 3-Laminado manual (PCC hojaldre)
+//             → 4-Laminado auto → 5-Medialunera (pesos) → 6-Fermentador
+//             → 7-Abatidor → 8-Envasado → 9-Sensorial + Recupero
+// T° de cámaras (masas/PT/ambiente) NO se duplican aquí — van en FTemp.
+// Trazabilidad de carro se escribe en cv_carros/{num_carro} (path fijo).
 function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCancel:()=>void}){
   const[d,sD]=useState({
     variedad:""as"manteca"|"grasa"|"",lote_harina:"",
     maquinista_12mil:"",maquinista_lam_auto:"",
-    // Amasado
-    agua_chiller_kg:"",hielo_kg:"",t_agua_chiller:"",tiempo_amasado:"",
-    // Ingreso cámara
+    // 1 — Amasado
+    agua_chiller_kg:"",hielo_kg:"",t_agua_chiller:"",tiempo_amasado:"",t_masa_salida:"",
+    // 2 — Ingreso cámara (trazabilidad)
     num_carro:"",fecha_ingreso_camara:hoy(),hora_ingreso_camara:"",
-    // Laminado manual
+    // 3 — Laminado manual / salida cámara (trazabilidad)
     num_carro_laminado:"",fecha_salida_camara:hoy(),hora_salida_camara:"",hojaldre_ok:false,
-    // Laminado automático
+    // 4 — Laminado automático
     calibre_inicio:"",calibre_fin:"",ancho_cm:"",
-    // Medialunera
+    // 5 — Medialunera + Pesos
     calibre_medialunera:"",
-    // Pesos
     muestras_inicio:["","","","",""],muestras_medio:["","","","",""],muestras_fin:["","","","",""],
-    ajustado:"",
-    // Fermentador
+    ajustado:"",pct_recupero:"",
+    // 6 — Fermentador (único registro de T° fermentador)
     t_fermentador:"",humedad_fermentador:"",tiempo_fermentado:"",
     num_carro_fermentador:"",hora_ingreso_fermentador:"",hora_salida_fermentador:"",
-    // Abatidor
-    t_abatidor:"",t_salida_abatidor:"",tiempo_abatido:"",
-    num_carro_abatidor:"",
-    // Envasado
+    // 7 — Abatidor (único registro T° abatidor y salida)
+    t_abatidor:"",t_salida_abatidor:"",tiempo_abatido:"",num_carro_abatidor:"",
+    // 8 — Envasado
     bandejas_unidades_ok:false,etiqueta_vigente:false,t_medialunas_envasar:"",obs_envasado:"",
-    // Cámara final
-    t_camara_final:"",
-    // Sensorial
+    // 9 — Sensorial
     color_ok:false,forma_ok:false,textura_ok:false,sensorial_obs:"",
-    pct_recupero:"",observaciones:"",fotos:[] as FotoMeta[]});
+    observaciones:"",fotos:[] as FotoMeta[]});
   const[g,sG]=useState(false);
 
   const horasReposo=calcHorasReposo(d.hora_ingreso_camara,d.fecha_ingreso_camara,d.hora_salida_camara,d.fecha_salida_camara);
@@ -353,119 +405,202 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
   const pt=d.muestras_inicio.concat(d.muestras_medio,d.muestras_fin).some(v=>v!=="")
     ?Math.round((pi+pm+pf)/([pi,pm,pf].filter(v=>v>0).length||1)*10)/10:0;
   const dv=pesoObj>0&&pt>0?Math.round(Math.abs(pt-pesoObj)/pesoObj*100*10)/10:0;
+
+  // PCC por etapa — sin duplicar T° de cámaras
+  const aAgua=d.t_agua_chiller!==""&&(parseFloat(d.t_agua_chiller)<1||parseFloat(d.t_agua_chiller)>6);
+  const aTiempoAm=d.tiempo_amasado!==""&&(parseFloat(d.tiempo_amasado)<22||parseFloat(d.tiempo_amasado)>28);
+  const aTMasa=d.t_masa_salida!==""&&(parseFloat(d.t_masa_salida)<18||parseFloat(d.t_masa_salida)>22);
+  const aReposoMin=horasReposo>0&&horasReposo<8;
+  const aHojaldre=d.num_carro_laminado!==""&&!d.hojaldre_ok;
   const aPeso=pt>0&&Math.abs(pt-pesoObj)>5;
   const aFerment=d.t_fermentador!==""&&(parseFloat(d.t_fermentador)<25||parseFloat(d.t_fermentador)>31);
-  const aHumedad=d.humedad_fermentador!==""&&(parseFloat(d.humedad_fermentador)<85||parseFloat(d.humedad_fermentador)>91);
+  const aHumedad=d.humedad_fermentador!==""&&(parseFloat(d.humedad_fermentador)<85||parseFloat(d.humedad_fermentador)>95);
   const aTiempoFerm=d.tiempo_fermentado!==""&&(parseFloat(d.tiempo_fermentado)<55||parseFloat(d.tiempo_fermentado)>65);
   const aAbat=d.t_abatidor!==""&&(isMant?(parseFloat(d.t_abatidor)>-22||parseFloat(d.t_abatidor)<-26):(isGrasa?(parseFloat(d.t_abatidor)>-16||parseFloat(d.t_abatidor)<-20):false));
   const aSalida=isMant&&d.t_salida_abatidor!==""&&parseFloat(d.t_salida_abatidor)>-12;
-  const aCamara=d.t_camara_final!==""&&parseFloat(d.t_camara_final)>-17;
-  const aRecupero=d.pct_recupero!==""&&parseFloat(d.pct_recupero)>10;
   const aEnvasado=d.t_medialunas_envasar!==""&&parseFloat(d.t_medialunas_envasar)>-12;
+  const aRecupero=d.pct_recupero!==""&&parseFloat(d.pct_recupero)>10;
 
-  function setMuestra(grupo:"muestras_inicio"|"muestras_medio"|"muestras_fin",idx:number,val:string){sD(p=>{const arr=[...p[grupo]];arr[idx]=val;return{...p,[grupo]:arr};});}
+  function setMuestra(g:"muestras_inicio"|"muestras_medio"|"muestras_fin",i:number,v:string){sD(p=>{const a=[...p[g]];a[i]=v;return{...p,[g]:a};});}
 
-  async function sv(){sG(true);onSave({id:gid("ml"),tipo:"medialunas",turno:u.turno,responsable:u.nombre,fecha:hoy(),hora:ahora(),timestamp:new Date().toISOString(),
-    prom_inicio:pi,prom_medio:pm,prom_fin:pf,prom_total:pt,desvio_pct:dv,
-    alertas:{peso_nc:aPeso,fermentador_nc:aFerment,humedad_nc:aHumedad,tiempo_ferm_nc:aTiempoFerm,t_abatidor_nc:aAbat,t_salida_nc:aSalida,t_camara_nc:aCamara,recupero_exc:aRecupero,t_envasado_nc:aEnvasado},...d} as unknown as Reg);sG(false);}
+  async function sv(){
+    sG(true);
+    // Escribir trazabilidad de carro en path fijo (independiente de versión)
+    if(d.num_carro){
+      await agregarEtapaCarro(d.num_carro,{etapa:"amasado_ingreso_camara",fecha:d.fecha_ingreso_camara,hora:d.hora_ingreso_camara,operario:u.nombre,turno:u.turno,datos:{agua_kg:d.agua_chiller_kg,hielo_kg:d.hielo_kg,t_agua:d.t_agua_chiller,tiempo_am:d.tiempo_amasado,t_masa:d.t_masa_salida,lote:d.lote_harina}},d.variedad,d.lote_harina);
+    }
+    if(d.num_carro_laminado){
+      await agregarEtapaCarro(d.num_carro_laminado,{etapa:"laminado_salida_camara",fecha:d.fecha_salida_camara,hora:d.hora_salida_camara,operario:u.nombre,turno:u.turno,datos:{hojaldre:d.hojaldre_ok?"ok":"nc",calibre_inicio:d.calibre_inicio,calibre_fin:d.calibre_fin,ancho:d.ancho_cm}},d.variedad,d.lote_harina);
+    }
+    if(d.num_carro_fermentador){
+      await agregarEtapaCarro(d.num_carro_fermentador,{etapa:"fermentador",fecha:hoy(),hora:d.hora_ingreso_fermentador,operario:u.nombre,turno:u.turno,datos:{t_fermentador:d.t_fermentador,humedad:d.humedad_fermentador,tiempo:d.tiempo_fermentado,hora_ingreso:d.hora_ingreso_fermentador,hora_salida:d.hora_salida_fermentador}},d.variedad,d.lote_harina);
+    }
+    if(d.num_carro_abatidor){
+      await agregarEtapaCarro(d.num_carro_abatidor,{etapa:"abatidor",fecha:hoy(),hora:ahora(),operario:u.nombre,turno:u.turno,datos:{t_abatidor:d.t_abatidor,t_salida:d.t_salida_abatidor,tiempo:d.tiempo_abatido}},d.variedad,d.lote_harina);
+    }
+    onSave({id:gid("ml"),tipo:"medialunas",turno:u.turno,responsable:u.nombre,fecha:hoy(),hora:ahora(),timestamp:new Date().toISOString(),
+      prom_inicio:pi,prom_medio:pm,prom_fin:pf,prom_total:pt,desvio_pct:dv,
+      alertas:{peso_nc:aPeso,t_agua_nc:aAgua,tiempo_am_nc:aTiempoAm,t_masa_nc:aTMasa,reposo_nc:aReposoMin,hojaldre_nc:aHojaldre,fermentador_nc:aFerment,humedad_nc:aHumedad,tiempo_ferm_nc:aTiempoFerm,t_abatidor_nc:aAbat,t_salida_nc:aSalida,t_envasado_nc:aEnvasado,recupero_exc:aRecupero},
+      ...d} as unknown as Reg);
+    sG(false);
+  }
 
-  return<FW titulo="🥐 Medialunas" sub="P276/P280 · Proceso completo + Pesos" onCancel={onCancel} onSave={sv} g={g} ch={<>
+  return<FW titulo="🥐 Medialunas" sub="P280 Manteca / P276 Grasa — Proceso completo" onCancel={onCancel} onSave={sv} g={g} ch={<>
+
+    {/* Variedad + Lote */}
     <div className="flex gap-2">{(["manteca","grasa"] as const).map(x=><button key={x} onClick={()=>sD(p=>({...p,variedad:x}))} className={cn("flex-1 py-2.5 rounded-xl text-sm font-semibold border-2",d.variedad===x?"border-amber-500 bg-amber-50 text-amber-700":"border-gray-200 bg-white text-gray-600")}>{x==="manteca"?"🥐 Manteca (P280)":"🥐 Grasa (P276)"}</button>)}</div>
-    <Txt label="Lote / N° amasijo" value={d.lote_harina} onChange={v=>sD(p=>({...p,lote_harina:v}))} ph="Trazabilidad"/>
+    <Txt label="Lote / N° amasijo" value={d.lote_harina} onChange={v=>sD(p=>({...p,lote_harina:v}))} ph="Trazabilidad — obligatorio"/>
 
-    {/* 1 — AMASADO */}
-    <SecH label="🫱 1. Amasado" color="text-indigo-700"/>
-    <div className="grid grid-cols-2 gap-2">
-      <Num label="Agua (Kg)" spec="PC" value={d.agua_chiller_kg} onChange={v=>sD(p=>({...p,agua_chiller_kg:v}))}/>
-      <Num label="Hielo (Kg)" spec="PC" value={d.hielo_kg} onChange={v=>sD(p=>({...p,hielo_kg:v}))}/>
-    </div>
-    <Num label="T° agua chiller (°C)" spec="PCC — Parámetro: 1°C a 6°C" value={d.t_agua_chiller} onChange={v=>sD(p=>({...p,t_agua_chiller:v}))} al={d.t_agua_chiller!==""&&(parseFloat(d.t_agua_chiller)<1||parseFloat(d.t_agua_chiller)>6)}/>
-    <Num label="Tiempo de amasado (min)" spec="PCC — Parámetro: 25 min ±3" value={d.tiempo_amasado} onChange={v=>sD(p=>({...p,tiempo_amasado:v}))} al={d.tiempo_amasado!==""&&(parseFloat(d.tiempo_amasado)<22||parseFloat(d.tiempo_amasado)>28)}/>
-
-    {/* 2 — INGRESO A CÁMARA */}
-    <SecH label="❄️ 2. Ingreso a cámara (reposo masa)" color="text-cyan-700"/>
-    <Txt label="N° de carro" value={d.num_carro} onChange={v=>sD(p=>({...p,num_carro:v}))} ph="ej: C-12"/>
-    <div className="grid grid-cols-2 gap-2">
-      <Txt label="Fecha ingreso" value={d.fecha_ingreso_camara} onChange={v=>sD(p=>({...p,fecha_ingreso_camara:v}))} ph="YYYY-MM-DD"/>
-      <Txt label="Hora ingreso" value={d.hora_ingreso_camara} onChange={v=>sD(p=>({...p,hora_ingreso_camara:v}))} ph="HH:MM"/>
-    </div>
-
-    {/* 3 — LAMINADO MANUAL */}
-    <SecH label="📋 3. Laminado manual — Salida de cámara" color="text-violet-700"/>
-    <Txt label="N° de carro (mismo carro)" value={d.num_carro_laminado} onChange={v=>sD(p=>({...p,num_carro_laminado:v}))} ph="debe coincidir con ingreso"/>
-    <div className="grid grid-cols-2 gap-2">
-      <Txt label="Fecha salida" value={d.fecha_salida_camara} onChange={v=>sD(p=>({...p,fecha_salida_camara:v}))} ph="YYYY-MM-DD"/>
-      <Txt label="Hora salida" value={d.hora_salida_camara} onChange={v=>sD(p=>({...p,hora_salida_camara:v}))} ph="HH:MM"/>
-    </div>
-    {horasReposo>0&&<div className={cn("rounded-xl p-3 text-sm text-center font-semibold border",horasReposo>=8?"bg-green-50 border-green-300 text-green-700":"bg-red-50 border-red-300 text-red-700")}>
-      ⏱ Reposo en cámara: <b>{horasReposo}h</b> {horasReposo<8?"⚠ Mínimo 8h":"✓"}
-    </div>}
-    <div className="flex flex-col gap-1"><label className="text-xs text-gray-500">PCC — Corte hojaldre</label>
-      <button onClick={()=>sD(p=>({...p,hojaldre_ok:!p.hojaldre_ok}))} className={cn("h-11 rounded-xl border-2 text-sm font-semibold",d.hojaldre_ok?"border-green-400 bg-green-50 text-green-700":"border-red-300 bg-red-50 text-red-700")}>
-        {d.hojaldre_ok?"✓ Hojaldre visible — Cumple":"✕ Hojaldre NC — No cumple"}
-      </button>
-      {!d.hojaldre_ok&&d.num_carro_laminado&&<span className="text-[10px] text-red-500 font-medium">⚠ Desvío PCC — registrar NC</span>}
+    {/* ── SECTOR 1: AMASADO ─────────────────────────────────── */}
+    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-3">🫱 Sector 1 — Amasado (P280 §3)</div>
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-2">
+          <Num label="Agua chiller (Kg)" value={d.agua_chiller_kg} onChange={v=>sD(p=>({...p,agua_chiller_kg:v}))}/>
+          <Num label="Hielo (Kg)" value={d.hielo_kg} onChange={v=>sD(p=>({...p,hielo_kg:v}))}/>
+        </div>
+        <Num label="T° agua chiller (°C)" spec="PCC — Parámetro: 1°C a 6°C" value={d.t_agua_chiller} onChange={v=>sD(p=>({...p,t_agua_chiller:v}))} al={aAgua}/>
+        {aAgua&&<div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">⚠ PCC — T° agua fuera de rango. Ajustar proporción agua/hielo.</div>}
+        <Num label="Tiempo total amasado (min)" spec="PCC — Parámetro: 25 min ±3" value={d.tiempo_amasado} onChange={v=>sD(p=>({...p,tiempo_amasado:v}))} al={aTiempoAm}/>
+        <Num label="T° masa al salir amasadora (°C)" spec="PCC — Parámetro: 20°C ±2°C" value={d.t_masa_salida} onChange={v=>sD(p=>({...p,t_masa_salida:v}))} al={aTMasa}/>
+        {aTMasa&&<div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">⚠ T° masa NC — Retirar de amasadora, fraccionar y reposar en cámara con seguimiento.</div>}
+      </div>
     </div>
 
-    {/* 4 — LAMINADO AUTOMÁTICO */}
-    <SecH label="⚙️ 4. Laminado automático" color="text-orange-700"/>
-    <Txt label="Maquinista Laminadora Automática" value={d.maquinista_lam_auto} onChange={v=>sD(p=>({...p,maquinista_lam_auto:v}))} ph="Nombre del operario"/>
-    <div className="grid grid-cols-3 gap-2">
-      <Num label="Calibre inicio" spec="PC" value={d.calibre_inicio} onChange={v=>sD(p=>({...p,calibre_inicio:v}))}/>
-      <Num label="Calibre fin" spec="PC" value={d.calibre_fin} onChange={v=>sD(p=>({...p,calibre_fin:v}))}/>
-      <Num label="Ancho (cm)" spec="PC" value={d.ancho_cm} onChange={v=>sD(p=>({...p,ancho_cm:v}))}/>
+    {/* ── SECTOR 2: INGRESO A CÁMARA (Trazabilidad) ─────────── */}
+    <div className="bg-cyan-50 border border-cyan-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-cyan-700 uppercase tracking-wide mb-1">❄️ Sector 2 — Ingreso a cámara (reposo masa)</div>
+      <div className="text-[10px] text-cyan-500 mb-3">Reposo: mínimo 8h — óptimo 12h · Registrado en cv_carros/ (fijo)</div>
+      <div className="flex flex-col gap-3">
+        <Txt label="N° de carro" value={d.num_carro} onChange={v=>sD(p=>({...p,num_carro:v}))} ph="ej: C-12 — único por lote"/>
+        <div className="grid grid-cols-2 gap-2">
+          <Txt label="Fecha ingreso" value={d.fecha_ingreso_camara} onChange={v=>sD(p=>({...p,fecha_ingreso_camara:v}))} ph="YYYY-MM-DD"/>
+          <Txt label="Hora ingreso" value={d.hora_ingreso_camara} onChange={v=>sD(p=>({...p,hora_ingreso_camara:v}))} ph="HH:MM"/>
+        </div>
+      </div>
     </div>
 
-    {/* 5 — MEDIALUNERA */}
-    <SecH label="🥐 5. Medialunera" color="text-amber-700"/>
-    <Txt label="Maquinista 12 Mil" value={d.maquinista_12mil} onChange={v=>sD(p=>({...p,maquinista_12mil:v}))} ph="Nombre del operario"/>
-    <Num label="Calibre medialunera" spec="PC" value={d.calibre_medialunera} onChange={v=>sD(p=>({...p,calibre_medialunera:v}))}/>
+    {/* ── SECTOR 3: LAMINADO MANUAL + PCC HOJALDRE ──────────── */}
+    <div className="bg-violet-50 border border-violet-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-violet-700 uppercase tracking-wide mb-1">📋 Sector 3 — Laminado manual / Salida de cámara</div>
+      <div className="text-[10px] text-violet-500 mb-3">T° ambiente válida para laminado: 16°C a 20°C (registrar en Temperaturas)</div>
+      <div className="flex flex-col gap-3">
+        <Txt label="N° de carro (mismo que ingreso)" value={d.num_carro_laminado} onChange={v=>sD(p=>({...p,num_carro_laminado:v}))} ph="debe coincidir con Sector 2"/>
+        <div className="grid grid-cols-2 gap-2">
+          <Txt label="Fecha salida cámara" value={d.fecha_salida_camara} onChange={v=>sD(p=>({...p,fecha_salida_camara:v}))} ph="YYYY-MM-DD"/>
+          <Txt label="Hora salida cámara" value={d.hora_salida_camara} onChange={v=>sD(p=>({...p,hora_salida_camara:v}))} ph="HH:MM"/>
+        </div>
+        {horasReposo>0&&<div className={cn("rounded-xl p-3 text-sm text-center font-bold border",horasReposo>=8?"bg-green-50 border-green-300 text-green-700":horasReposo>=12?"bg-blue-50 border-blue-300 text-blue-700":"bg-red-50 border-red-300 text-red-700")}>
+          ⏱ Reposo en cámara: {horasReposo}h {horasReposo<8?"⚠ MÍNIMO 8h — desvío de proceso":horasReposo>=12?"✓ Óptimo (12h)":"✓ Mínimo cumplido"}
+        </div>}
+        {/* PCC Hojaldre */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-red-700">🔴 PCC — Corte: Hojaldre visible</label>
+          <button onClick={()=>sD(p=>({...p,hojaldre_ok:!p.hojaldre_ok}))} className={cn("h-12 rounded-xl border-2 text-sm font-bold",d.hojaldre_ok?"border-green-400 bg-green-50 text-green-700":"border-red-300 bg-red-50 text-red-700")}>
+            {d.hojaldre_ok?"✓ CUMPLE — Hojaldre visible en corte":"✕ NO CUMPLE — Hojaldre no visible (NC)"}
+          </button>
+          {aHojaldre&&<div className="bg-red-50 border border-red-300 rounded-lg p-2 text-xs text-red-700 font-medium">⚠ PCC fuera de límite — Generar NC inmediatamente. No continuar proceso.</div>}
+        </div>
+      </div>
+    </div>
 
-    {/* Pesos — 15 muestras */}
-    <SecH label={`⚖️ Pesos (objetivo: ${pesoObj}g ±5g)`} color="text-blue-700"/>
-    {(["muestras_inicio","muestras_medio","muestras_fin"] as const).map((grupo,gi)=>{
-      const labels=["Inicio","Medio","Fin"];const prom=[pi,pm,pf][gi];
-      return<div key={grupo} className="bg-gray-50 rounded-xl p-3 flex flex-col gap-2">
-        <div className="flex items-center justify-between"><span className="text-xs font-semibold text-gray-600">{labels[gi]} (5 muestras)</span>{prom>0&&<span className={cn("text-xs font-bold",Math.abs(prom-pesoObj)>5?"text-red-600":"text-green-600")}>X̄ {prom}g</span>}</div>
-        <div className="grid grid-cols-5 gap-1">{d[grupo].map((v,i)=><input key={i} type="number" inputMode="decimal" value={v} onChange={e=>setMuestra(grupo,i,e.target.value)} placeholder={`${i+1}`} className={cn("h-9 rounded-lg border text-center text-xs font-mono",v!==""&&Math.abs(parseFloat(v)-pesoObj)>5?"border-red-400 bg-red-50":"border-gray-200 bg-white")}/>)}</div>
-      </div>;})}
-    {pt>0&&<div className={cn("rounded-xl p-3 flex items-center justify-between border",aPeso?"border-red-300 bg-red-50":"border-green-300 bg-green-50")}>
-      <div><div className="text-xs font-semibold">{aPeso?"⚠ Fuera de rango":"✓ En rango"}</div><div className="text-[10px] text-gray-500">Promedio total: {pt}g</div></div>
-      <div className={cn("text-xl font-bold",aPeso?"text-red-600":"text-green-600")}>{dv}%</div>
-    </div>}
-    <Sel label="¿Ajustado?" value={d.ajustado} onChange={v=>sD(p=>({...p,ajustado:v}))} al={aPeso&&!d.ajustado} opts={[{v:"si",l:"✓ Sí, ajustado"},{v:"no",l:"No"},{v:"retirado",l:"Retirado de línea"}]}/>
+    {/* ── SECTOR 4: LAMINADO AUTOMÁTICO ─────────────────────── */}
+    <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-orange-700 uppercase tracking-wide mb-3">⚙️ Sector 4 — Laminado automático (P280 §5)</div>
+      <div className="flex flex-col gap-3">
+        <Txt label="Maquinista Laminadora Automática" value={d.maquinista_lam_auto} onChange={v=>sD(p=>({...p,maquinista_lam_auto:v}))} ph="Nombre del operario"/>
+        <div className="grid grid-cols-3 gap-2">
+          <Num label="Calibre inicio" spec="PC" value={d.calibre_inicio} onChange={v=>sD(p=>({...p,calibre_inicio:v}))}/>
+          <Num label="Calibre fin" spec="PC" value={d.calibre_fin} onChange={v=>sD(p=>({...p,calibre_fin:v}))}/>
+          <Num label="Ancho (cm)" spec="PC" value={d.ancho_cm} onChange={v=>sD(p=>({...p,ancho_cm:v}))}/>
+        </div>
+      </div>
+    </div>
 
-    {/* Fermentador */}
-    <SecH label="🌡️ Fermentador" color="text-green-700"/>
-    <Num label="T° fermentador (°C)" spec="28°C ±3°C" value={d.t_fermentador} onChange={v=>sD(p=>({...p,t_fermentador:v}))} al={aFerment}/>
-    <Num label="Humedad (%)" spec="90%" value={d.humedad_fermentador} onChange={v=>sD(p=>({...p,humedad_fermentador:v}))}/>
-    <Num label="Tiempo fermentado (min)" spec="60 min" value={d.tiempo_fermentado} onChange={v=>sD(p=>({...p,tiempo_fermentado:v}))}/>
+    {/* ── SECTOR 5: MEDIALUNERA + PESOS ─────────────────────── */}
+    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-3">🥐 Sector 5 — Medialunera + Pesos (P280 §6)</div>
+      <div className="flex flex-col gap-3">
+        <Txt label="Maquinista 12 Mil" value={d.maquinista_12mil} onChange={v=>sD(p=>({...p,maquinista_12mil:v}))} ph="Nombre del operario"/>
+        <Num label="Calibre medialunera" spec="PC" value={d.calibre_medialunera} onChange={v=>sD(p=>({...p,calibre_medialunera:v}))}/>
+        <div className="text-xs font-semibold text-blue-700">⚖️ Pesos — PCC: {pesoObj}g ±5g · 15 muestras (inicio / medio / fin)</div>
+        {(["muestras_inicio","muestras_medio","muestras_fin"] as const).map((grupo,gi)=>{
+          const labels=["Inicio","Medio","Fin"];const prom=[pi,pm,pf][gi];
+          return<div key={grupo} className="bg-white rounded-lg p-2 flex flex-col gap-2 border border-amber-100">
+            <div className="flex items-center justify-between"><span className="text-xs font-semibold text-gray-600">{labels[gi]} — 5 muestras</span>{prom>0&&<span className={cn("text-xs font-bold",Math.abs(prom-pesoObj)>5?"text-red-600":"text-green-600")}>X̄ {prom}g</span>}</div>
+            <div className="grid grid-cols-5 gap-1">{d[grupo].map((v,i)=><input key={i} type="number" inputMode="decimal" value={v} onChange={e=>setMuestra(grupo,i,e.target.value)} placeholder={`${i+1}`} className={cn("h-9 rounded-lg border text-center text-xs font-mono",v!==""&&Math.abs(parseFloat(v)-pesoObj)>5?"border-red-400 bg-red-50":"border-gray-200 bg-white")}/>)}</div>
+          </div>;})}
+        {pt>0&&<div className={cn("rounded-xl p-3 flex items-center justify-between border font-bold",aPeso?"border-red-300 bg-red-50":"border-green-300 bg-green-50")}>
+          <span className={aPeso?"text-red-700":"text-green-700"}>{aPeso?"⚠ PCC — Peso fuera de rango":"✓ Peso en rango"} · X̄ {pt}g</span>
+          <span className={cn("text-xl",aPeso?"text-red-600":"text-green-600")}>{dv}%</span>
+        </div>}
+        {aPeso&&<Sel label="Acción correctiva peso" value={d.ajustado} onChange={v=>sD(p=>({...p,ajustado:v}))} al={!d.ajustado} opts={[{v:"si",l:"✓ Calibre ajustado"},{v:"no",l:"Sin ajuste (documentar)"},{v:"retirado",l:"Retirado de línea"}]}/>}
+        <Num label="% recupero sobre harina del amasijo" spec="PC — Límite: ≤10%" value={d.pct_recupero} onChange={v=>sD(p=>({...p,pct_recupero:v}))} al={aRecupero}/>
+        {aRecupero&&<div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-700">⚠ Recupero excede límite — revisar recortes y proceso.</div>}
+      </div>
+    </div>
 
-    {/* Abatidor */}
-    <SecH label="❄️ Abatidor" color="text-indigo-700"/>
-    <div className="text-[10px] text-indigo-400">{isMant?"-24°C ±2°C · salida ≤-12°C":isGrasa?"-16°C a -20°C":""}</div>
-    <Num label="T° seteo abatidor (°C)" spec={isMant?"-24°C ±2°C":isGrasa?"-16°C a -20°C":""} value={d.t_abatido} onChange={v=>sD(p=>({...p,t_abatido:v}))} al={aAbat}/>
-    <Num label="Tiempo abatido (min)" spec="~60 min" value={d.tiempo_abatido} onChange={v=>sD(p=>({...p,tiempo_abatido:v}))}/>
-    {isMant&&<Num label="T° salida abatidor (°C)" spec="PCC ≤-12°C" value={d.t_salida_abatidor} onChange={v=>sD(p=>({...p,t_salida_abatidor:v}))} al={aSalida}/>}
+    {/* ── SECTOR 6: FERMENTADOR ─────────────────────────────── */}
+    <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-green-700 uppercase tracking-wide mb-1">🌡️ Sector 6 — Fermentador (P280 §8)</div>
+      <div className="text-[10px] text-green-500 mb-3">Seteo: 33°C · 90% humedad · 60 min — Variación posible según condición ambiental</div>
+      <div className="flex flex-col gap-3">
+        <Txt label="N° de carro fermentador" value={d.num_carro_fermentador} onChange={v=>sD(p=>({...p,num_carro_fermentador:v}))} ph="Trazabilidad fija"/>
+        <div className="grid grid-cols-2 gap-2">
+          <Txt label="Hora ingreso" value={d.hora_ingreso_fermentador} onChange={v=>sD(p=>({...p,hora_ingreso_fermentador:v}))} ph="HH:MM"/>
+          <Txt label="Hora salida" value={d.hora_salida_fermentador} onChange={v=>sD(p=>({...p,hora_salida_fermentador:v}))} ph="HH:MM"/>
+        </div>
+        <Num label="T° fermentador (°C)" spec="PCC — 28°C ±3°C" value={d.t_fermentador} onChange={v=>sD(p=>({...p,t_fermentador:v}))} al={aFerment}/>
+        <div className="grid grid-cols-2 gap-2">
+          <Num label="Humedad (%)" spec="PCC — 90%" value={d.humedad_fermentador} onChange={v=>sD(p=>({...p,humedad_fermentador:v}))} al={aHumedad}/>
+          <Num label="Tiempo (min)" spec="PCC — 60 min" value={d.tiempo_fermentado} onChange={v=>sD(p=>({...p,tiempo_fermentado:v}))} al={aTiempoFerm}/>
+        </div>
+        {(aFerment||aHumedad||aTiempoFerm)&&<div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">⚠ PCC fermentador fuera de parámetro — documentar causa y acción en Observaciones.</div>}
+      </div>
+    </div>
 
-    {/* Cámara final */}
-    <SecH label="🏭 Cámara final" color="text-blue-800"/>
-    <Num label="T° cámara final (°C)" spec="PCC ≤-17°C" value={d.t_camara_final} onChange={v=>sD(p=>({...p,t_camara_final:v}))} al={aCamara}/>
+    {/* ── SECTOR 7: ABATIDOR ────────────────────────────────── */}
+    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-1">❄️ Sector 7 — Abatidor (P280 §9)</div>
+      <div className="text-[10px] text-indigo-400 mb-3">{isMant?"Manteca: seteo -24°C ±2°C · salida ≤-12°C · ~60 min":isGrasa?"Grasa: -16°C a -20°C · ~60 min":"Seleccionar variedad arriba"}</div>
+      <div className="flex flex-col gap-3">
+        <Txt label="N° de carro abatidor" value={d.num_carro_abatidor} onChange={v=>sD(p=>({...p,num_carro_abatidor:v}))} ph="Trazabilidad fija"/>
+        <Num label="T° seteo abatidor (°C)" spec={isMant?"PCC — -24°C ±2°C":isGrasa?"PCC — -16°C a -20°C":""} value={d.t_abatidor} onChange={v=>sD(p=>({...p,t_abatidor:v}))} al={aAbat}/>
+        <Num label="Tiempo abatido (min)" spec="~60 min" value={d.tiempo_abatido} onChange={v=>sD(p=>({...p,tiempo_abatido:v}))}/>
+        {isMant&&<Num label="T° salida abatidor (°C)" spec="PCC CRÍTICO — ≤-12°C para habilitar envasado" value={d.t_salida_abatidor} onChange={v=>sD(p=>({...p,t_salida_abatidor:v}))} al={aSalida}/>}
+        {aSalida&&<div className="bg-red-50 border border-red-300 rounded-lg p-2 text-xs text-red-700 font-semibold">🔴 PCC CRÍTICO — Medialuna no habilitada para envasado. Continuar abatido.</div>}
+        {aAbat&&<div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">⚠ T° abatidor NC — verificar carga y funcionamiento.</div>}
+      </div>
+    </div>
 
-    {/* Recupero */}
-    <SecH label="♻️ Recupero" color="text-gray-600"/>
-    <Num label="% recupero s/harina" spec="≤10% harina del amasijo" value={d.pct_recupero} onChange={v=>sD(p=>({...p,pct_recupero:v}))} al={aRecupero}/>
+    {/* ── SECTOR 8: ENVASADO ────────────────────────────────── */}
+    <div className="bg-teal-50 border border-teal-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-teal-700 uppercase tracking-wide mb-1">📦 Sector 8 — Envasado (P280 §10)</div>
+      <div className="text-[10px] text-teal-500 mb-3">Habilitado solo si T° salida abatidor ≤-12°C · 180 und/cajón (4 bandejas + 12 sueltas)</div>
+      <div className="flex flex-col gap-3">
+        <Num label="T° medialunas al envasar (°C)" spec="PCC — debe ser ≤-12°C" value={d.t_medialunas_envasar} onChange={v=>sD(p=>({...p,t_medialunas_envasar:v}))} al={aEnvasado}/>
+        {aEnvasado&&<div className="bg-red-50 border border-red-300 rounded-lg p-2 text-xs text-red-700 font-semibold">🔴 PCC — No envasar. T° no cumple. Devolver a abatidor.</div>}
+        <Chk label="✓ Bandejas completas (42 manteca / 36 grasa por bandeja)" value={d.bandejas_unidades_ok} onChange={v=>sD(p=>({...p,bandejas_unidades_ok:v}))}/>
+        <Chk label="✓ Etiqueta vigente con fecha, tipo y lote visible" value={d.etiqueta_vigente} onChange={v=>sD(p=>({...p,etiqueta_vigente:v}))}/>
+        <TA label="Obs. envasado" value={d.obs_envasado} onChange={v=>sD(p=>({...p,obs_envasado:v}))} ph="Novedades, cantidades, incidencias…"/>
+      </div>
+    </div>
 
-    {/* Sensorial */}
-    <SecH label="👅 Sensorial" color="text-purple-700"/>
-    <div className="flex flex-col gap-1.5"><Chk label="Color adecuado (dorado uniforme)" value={d.color_ok} onChange={v=>sD(p=>({...p,color_ok:v}))}/><Chk label="Forma correcta (punta al centro, hacia abajo)" value={d.forma_ok} onChange={v=>sD(p=>({...p,forma_ok:v}))}/><Chk label="Textura / hojaldrado OK" value={d.textura_ok} onChange={v=>sD(p=>({...p,textura_ok:v}))}/></div>
-    <TA label="Obs. sensorial" value={d.sensorial_obs} onChange={v=>sD(p=>({...p,sensorial_obs:v}))} ph="Desvíos, aroma, apariencia…"/>
+    {/* ── SECTOR 9: SENSORIAL ───────────────────────────────── */}
+    <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
+      <div className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-3">👅 Sector 9 — Evaluación sensorial</div>
+      <div className="flex flex-col gap-2">
+        <Chk label="✓ Color adecuado — dorado uniforme" value={d.color_ok} onChange={v=>sD(p=>({...p,color_ok:v}))}/>
+        <Chk label="✓ Forma correcta — punta al centro hacia abajo, sin aperturas" value={d.forma_ok} onChange={v=>sD(p=>({...p,forma_ok:v}))}/>
+        <Chk label="✓ Textura y hojaldrado OK" value={d.textura_ok} onChange={v=>sD(p=>({...p,textura_ok:v}))}/>
+      </div>
+      <div className="mt-3"><TA label="Obs. sensorial" value={d.sensorial_obs} onChange={v=>sD(p=>({...p,sensorial_obs:v}))} ph="Desvíos de color, aroma, textura, apertura…"/></div>
+    </div>
 
     <Fotos fotos={d.fotos} onAdd={f=>sD(p=>({...p,fotos:[...p.fotos,f]}))} onRemove={id=>sD(p=>({...p,fotos:p.fotos.filter(f=>f.id!==id)}))}/>
-    <TA label="Observaciones generales" value={d.observaciones} onChange={v=>sD(p=>({...p,observaciones:v}))}/>
+    <TA label="Observaciones generales / acciones correctivas" value={d.observaciones} onChange={v=>sD(p=>({...p,observaciones:v}))}/>
   </>}/>;
 }
-
 // ── FORM BPM (por incumplimiento) ─────────────────────────────
 function FBPM({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCancel:()=>void}){
   const[d,sD]=useState({sector:"",operario:"",incumplimientos:[] as string[],accion_tomada:"",responsable_sector:"",observaciones:"",fotos:[] as FotoMeta[]});const[g,sG]=useState(false);
@@ -600,6 +735,129 @@ function CategoriaDrop({icon,label,badge,count,alertas,children}:{icon:string;la
   </div>;
 }
 
+// ── FORM AUDITORÍA INTERNA ────────────────────────────────────
+const SECTORES_AUDIT=[
+  {k:"pct_recepcion",l:"Recepción MP"},
+  {k:"pct_amasado",l:"Amasado"},
+  {k:"pct_laminado",l:"Laminado"},
+  {k:"pct_medialunera",l:"Medialunera"},
+  {k:"pct_fermentador",l:"Fermentador"},
+  {k:"pct_abatidor",l:"Abatidor"},
+  {k:"pct_envasado",l:"Envasado"},
+  {k:"pct_camara_pt",l:"Cámara PT"},
+  {k:"pct_bpm",l:"BPM Personal"},
+  {k:"pct_limpieza",l:"Limpieza POES"},
+] as const;
+
+function FAuditoria({u,onSave,onCancel}:{u:Usuario;onSave:(a:RAuditoria)=>void;onCancel:()=>void}){
+  const[d,sD]=useState<Record<string,string>>(Object.fromEntries(SECTORES_AUDIT.map(s=>[s.k,""])));
+  const[obs,sObs]=useState("");const[acc,sAcc]=useState("");const[g,sG]=useState(false);
+  const vals=SECTORES_AUDIT.map(s=>parseFloat(d[s.k])).filter(v=>!isNaN(v)&&v>=0&&v<=100);
+  const total=vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):0;
+  const colorTotal=total>=90?"text-green-600":total>=70?"text-amber-600":"text-red-600";
+  const bgTotal=total>=90?"bg-green-50 border-green-300":total>=70?"bg-amber-50 border-amber-300":"bg-red-50 border-red-300";
+  async function sv(){sG(true);const a:RAuditoria={id:gid("aud"),fecha:hoy(),hora:ahora(),responsable:u.nombre,turno:u.turno,...Object.fromEntries(SECTORES_AUDIT.map(s=>[s.k,d[s.k]])) as unknown as RAuditoria,pct_total:total,observaciones:obs,acciones:acc};await saveAuditoria(a);onSave(a);sG(false);}
+  return<FW titulo="📋 Auditoría Interna" sub="Cargar % de cumplimiento por sector" onCancel={onCancel} onSave={sv} g={g} ch={<>
+    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700">Ingresá el % de cumplimiento (0-100) para cada sector. Se calcula el promedio automáticamente.</div>
+    {total>0&&<div className={cn("rounded-2xl border p-4 text-center",bgTotal)}>
+      <div className="text-xs text-gray-500 mb-1">Valor de Auditoría</div>
+      <div className={cn("text-4xl font-bold",colorTotal)}>{total}%</div>
+      <div className="text-xs mt-1">{total>=90?"✓ Excelente":total>=70?"⚠ Requiere mejoras":"🔴 Crítico — acción inmediata"}</div>
+      <div className="h-3 bg-gray-200 rounded-full mt-2 overflow-hidden"><div className={cn("h-full rounded-full transition-all",total>=90?"bg-green-500":total>=70?"bg-amber-500":"bg-red-500")} style={{width:`${total}%`}}/></div>
+    </div>}
+    <div className="flex flex-col gap-3">
+      {SECTORES_AUDIT.map(s=>{const v=parseFloat(d[s.k]);const ok=!isNaN(v)&&v>=0&&v<=100;const color=ok?(v>=90?"text-green-600":v>=70?"text-amber-600":"text-red-600"):"text-gray-400";
+        return<div key={s.k} className="flex items-center gap-3">
+          <label className="text-sm text-gray-700 w-36 flex-shrink-0">{s.l}</label>
+          <div className="flex-1 relative">
+            <input type="number" min="0" max="100" inputMode="decimal" value={d[s.k]} onChange={e=>sD(p=>({...p,[s.k]:e.target.value}))} placeholder="0–100" className={cn("w-full h-10 rounded-lg border px-3 pr-8 text-sm font-mono",d[s.k]&&!ok?"border-red-300":"border-gray-200")}/>
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">%</span>
+          </div>
+          {ok&&<div className={cn("text-sm font-bold w-12 text-right",color)}>{v}%</div>}
+          {ok&&<div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden"><div className={cn("h-full rounded-full",v>=90?"bg-green-500":v>=70?"bg-amber-400":"bg-red-500")} style={{width:`${v}%`}}/></div>}
+        </div>;})}
+    </div>
+    <TA label="Observaciones" value={obs} onChange={sObs} ph="Hallazgos, desvíos, observaciones de la auditoría…"/>
+    <TA label="Acciones requeridas" value={acc} onChange={sAcc} ph="Plan de acción, responsables, fechas…"/>
+  </>}/>;
+}
+
+// ── TRAZABILIDAD CARROS ───────────────────────────────────────
+const ETAPAS_LABEL:Record<string,string>={
+  amasado_ingreso_camara:"🫱 Amasado → Cámara",
+  laminado_salida_camara:"📋 Laminado → Salida",
+  fermentador:"🌡️ Fermentador",
+  abatidor:"❄️ Abatidor",
+};
+function BTrazCarros({semDias,onBack}:{semDias:DiaI[];onBack:()=>void}){
+  const[carros,setCarros]=useState<TrazCarro[]>([]);const[cg,setCg]=useState(false);const[exp,setExp]=useState<string|null>(null);const[busq,sBusq]=useState("");
+  const fechas=semDias.filter(d=>d.fecha).map(d=>d.fecha).sort();
+  const desde=fechas[0]||"";const hasta=fechas[fechas.length-1]||"";
+  useEffect(()=>{if(!desde)return;setCg(true);loadTrazCarrosSemana(desde,hasta).then(c=>{setCarros(c);setCg(false);});},[desde]);
+  const filtrados=carros.filter(c=>{const q=busq.toLowerCase();return!q||c.num_carro.toLowerCase().includes(q)||c.variedad?.toLowerCase().includes(q)||c.lote_harina?.toLowerCase().includes(q);});
+  return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-24">
+    <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
+      <div className="flex items-center gap-3 mb-3"><button onClick={onBack} className="text-gray-400 p-1 text-lg">←</button>
+        <div className="flex-1"><p className="text-base font-bold text-gray-800">🚛 Trazabilidad de Carros</p><p className="text-xs text-gray-400">{desde?`${fd(desde)} — ${fd(hasta)}`:""} · {carros.length} carros</p></div>{cg&&<Spin/>}
+      </div>
+      <div className="relative">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+        <input value={busq} onChange={e=>sBusq(e.target.value)} placeholder="Buscar N° carro, variedad, lote…" className="w-full h-10 rounded-xl border border-gray-200 pl-8 pr-3 text-sm bg-white"/>
+        {busq&&<button onClick={()=>sBusq("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">✕</button>}
+      </div>
+    </div>
+    <div className="p-4 flex flex-col gap-3">
+      {filtrados.length===0?<div className="text-center py-12 text-gray-400"><div className="text-3xl mb-2">🚛</div><p className="text-sm">Sin carros registrados</p></div>
+      :filtrados.map(c=>{const isExp=exp===c.num_carro;const etapasComp=c.etapas.length;
+        return<div key={c.num_carro} className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+          <div className="p-3 flex items-center justify-between" onClick={()=>setExp(isExp?null:c.num_carro)}>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 font-bold text-sm flex items-center justify-center">{c.num_carro}</div>
+              <div>
+                <div className="text-sm font-semibold text-gray-800">{c.variedad==="manteca"?"🥐 Manteca":c.variedad==="grasa"?"🥐 Grasa":"🥐 —"} · Lote: {c.lote_harina||"—"}</div>
+                <div className="text-[10px] text-gray-400 mt-0.5">{etapasComp} etapas · Últ. actualización: {c.ultimo_update?new Date(c.ultimo_update).toLocaleString("es-AR",{dateStyle:"short",timeStyle:"short"}):""}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex gap-0.5">{(["amasado_ingreso_camara","laminado_salida_camara","fermentador","abatidor"] as const).map(e=><div key={e} className={cn("w-2 h-2 rounded-full",c.etapas.some(x=>x.etapa===e)?"bg-green-500":"bg-gray-200")}/>)}</div>
+              <span className="text-gray-400 text-xs">{isExp?"▲":"▼"}</span>
+            </div>
+          </div>
+          {isExp&&<div className="border-t border-gray-100 p-3 flex flex-col gap-2">
+            {c.etapas.sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.hora.localeCompare(b.hora)).map((e,i)=><div key={i} className="bg-gray-50 rounded-xl p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-gray-700">{ETAPAS_LABEL[e.etapa]||e.etapa}</span>
+                <span className="text-[10px] text-gray-400">{fd(e.fecha)} {e.hora} · {e.turno} · {e.operario}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] text-gray-600">
+                {Object.entries(e.datos).filter(([,v])=>v).map(([k,v])=><span key={k}><b>{k.replace(/_/g," ")}</b>: {v}</span>)}
+              </div>
+            </div>)}
+          </div>}
+        </div>;})}
+    </div>
+  </div>;
+}
+
+// ── KPI AUDITORÍAS ────────────────────────────────────────────
+function KPIAuditoria({auditorias}:{auditorias:RAuditoria[]}){
+  if(!auditorias.length)return null;
+  const data=auditorias.slice(0,8).reverse().map(a=>({fecha:fd(a.fecha),pct:a.pct_total}));
+  const ult=auditorias[0];
+  const color=ult.pct_total>=90?"text-green-600":ult.pct_total>=70?"text-amber-600":"text-red-600";
+  const bg=ult.pct_total>=90?"bg-green-50 border-green-300":ult.pct_total>=70?"bg-amber-50 border-amber-300":"bg-red-50 border-red-300";
+  return<div className={cn("rounded-2xl border p-4",bg)}>
+    <div className="flex items-center justify-between mb-3">
+      <div><div className="text-xs font-bold text-gray-600 uppercase tracking-wide">📋 Auditoría Interna</div><div className="text-[10px] text-gray-400">{fd(ult.fecha)} · {ult.responsable}</div></div>
+      <div className={cn("text-3xl font-bold",color)}>{ult.pct_total}%</div>
+    </div>
+    {data.length>1&&<ResponsiveContainer width="100%" height={70}><BarChart data={data} margin={{top:0,right:0,left:-30,bottom:0}}><XAxis dataKey="fecha" tick={{fontSize:8}}/><YAxis domain={[0,100]} tick={{fontSize:8}}/><Tooltip formatter={(v)=>`${v}%`}/><Bar dataKey="pct" fill={ult.pct_total>=90?"#22c55e":ult.pct_total>=70?"#f59e0b":"#ef4444"} radius={[3,3,0,0]} name="Auditoría %"/></BarChart></ResponsiveContainer>}
+    <div className="grid grid-cols-5 gap-1 mt-2">
+      {SECTORES_AUDIT.map(s=>{const v=parseFloat((ult as unknown as Record<string,string>)[s.k])||0;return<div key={s.k} className="text-center"><div className="text-[9px] text-gray-400 truncate">{s.l.split(" ")[0]}</div><div className={cn("text-xs font-bold",v>=90?"text-green-600":v>=70?"text-amber-600":"text-red-600")}>{v||"—"}</div></div>;})}
+    </div>
+  </div>;
+}
+
 // ── CARD REGISTRO ─────────────────────────────────────────────
 function RegCard({r,onDelete,isC,nota,onNota}:{r:Reg;onDelete?:()=>void;isC:boolean;nota:string;onNota:(v:string)=>void}){
   const[exp,sE]=useState(false);const al=cAl(r.alertas);const mod=MODS.find(m=>m.id===r.tipo);
@@ -664,10 +922,11 @@ function KPICamaras({registros}:{registros:Reg[]}){
 }
 
 // ── RESUMEN PANEL ─────────────────────────────────────────────
-function ResumenPanel({registros,titulo,isCalidad,notas,onNota,eliminados,onElim,onRestore}:{
+function ResumenPanel({registros,titulo,isCalidad,notas,onNota,eliminados,onElim,onRestore,auditorias}:{
   registros:Reg[];titulo:string;isCalidad:boolean;
   notas:Record<string,string>;onNota:(id:string,v:string)=>void;
   eliminados:Set<string>;onElim:(id:string)=>void;onRestore:(id:string)=>void;
+  auditorias?:RAuditoria[];
 }){
   const[tab,sTab]=useState<"alertas"|"obs"|"reincidencias"|"ranking">("alertas");
   const vis=registros.filter(r=>!eliminados.has(r.id));
@@ -677,6 +936,7 @@ function ResumenPanel({registros,titulo,isCalidad,notas,onNota,eliminados,onElim
   function exportar(){dlTxt(buildTxt(registros,titulo,notas,eliminados),`CV_${titulo.replace(/\s/g,"_")}.txt`);}
   return<div className="flex flex-col gap-3">
     <KPICamaras registros={vis}/>
+    {auditorias&&auditorias.length>0&&<KPIAuditoria auditorias={auditorias}/>}
     <div className="grid grid-cols-3 gap-2">
       {[{l:"Registros",v:k.total,c:"text-blue-600"},{l:"Alertas",v:k.alertas,c:k.alertas>0?"text-red-600":"text-green-600"},{l:"NC",v:k.nc,c:k.nc>0?"text-amber-600":"text-green-600"}].map((x,i)=><div key={i} className="bg-white rounded-xl border border-gray-200 p-2 text-center"><div className="text-xs text-gray-400">{x.l}</div><div className={`text-xl font-bold ${x.c}`}>{x.v}</div></div>)}
     </div>
@@ -789,294 +1049,17 @@ function VDia({u,mes,sem,dia,onBack}:{u:Usuario;mes:MesI;sem:SemI;dia:DiaI;onBac
   </div>;
 }
 
-// ── BD RECEPCIÓN MP ───────────────────────────────────────────
-type SortRecep="fecha"|"proveedor"|"producto"|"resultado"|"t_ingreso";
-type SortDir="asc"|"desc";
-
-function BDRecepcion({registros,onBack}:{registros:Reg[];onBack:()=>void}){
-  const[busq,sBusq]=useState("");
-  const[filtProv,setFP]=useState("");const[filtRes,setFR]=useState("");
-  const[sort,setSort]=useState<SortRecep>("fecha");const[dir,setDir]=useState<SortDir>("desc");
-  const[exp,setExp]=useState<string|null>(null);
-
-  const receps=registros.filter(r=>r.tipo==="recepcion") as RRecep[];
-
-  // proveedores únicos para filtro
-  const provs=[...new Set(receps.map(r=>r.proveedor_nombre).filter(Boolean))].sort();
-
-  // filtrar + buscar
-  const filtrados=receps.filter(r=>{
-    const q=busq.toLowerCase();
-    const matchQ=!q||(r.producto?.toLowerCase().includes(q)||r.proveedor_nombre?.toLowerCase().includes(q)||r.remito_lote?.toLowerCase().includes(q)||r.observaciones?.toLowerCase().includes(q));
-    const matchP=!filtProv||r.proveedor_nombre===filtProv;
-    const matchR=!filtRes||r.resultado===filtRes;
-    return matchQ&&matchP&&matchR;
-  });
-
-  // ordenar
-  const ordenados=[...filtrados].sort((a,b)=>{
-    let va:string="",vb:string="";
-    if(sort==="fecha")va=a.fecha+a.hora,vb=b.fecha+b.hora;
-    else if(sort==="proveedor")va=a.proveedor_nombre||"",vb=b.proveedor_nombre||"";
-    else if(sort==="producto")va=a.producto||"",vb=b.producto||"";
-    else if(sort==="resultado")va=a.resultado||"",vb=b.resultado||"";
-    else if(sort==="t_ingreso")va=String(parseFloat(a.t_ingreso)||0).padStart(6,"0"),vb=String(parseFloat(b.t_ingreso)||0).padStart(6,"0");
-    return dir==="asc"?va.localeCompare(vb):vb.localeCompare(va);
-  });
-
-  function toggleSort(s:SortRecep){if(sort===s)setDir(d=>d==="asc"?"desc":"asc");else{setSort(s);setDir("asc");}}
-  function SortBtn({k,l}:{k:SortRecep;l:string}){return<button onClick={()=>toggleSort(k)} className={cn("px-2 py-1 rounded-lg text-[10px] font-medium border whitespace-nowrap",sort===k?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-600 border-gray-200")}>{l}{sort===k?(dir==="asc"?" ↑":" ↓"):""}</button>;}
-
-  // stats
-  const aprobados=receps.filter(r=>r.resultado==="aprobado").length;
-  const rechazados=receps.filter(r=>r.resultado==="rechazado").length;
-  const totalKg=receps.reduce((a,r)=>a+(parseFloat(r.cantidad_kg)||0),0);
-
-  return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-24">
-    {/* Header */}
-    <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
-      <div className="flex items-center gap-3 mb-3">
-        <button onClick={onBack} className="text-gray-400 p-1 text-lg">←</button>
-        <div className="flex-1"><p className="text-base font-bold text-gray-800">🚚 BD Recepción MP</p><p className="text-xs text-gray-400">{receps.length} registros · {totalKg.toFixed(0)} kg total</p></div>
-      </div>
-      {/* Buscador */}
-      <div className="relative mb-2">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
-        <input value={busq} onChange={e=>sBusq(e.target.value)} placeholder="Buscar producto, proveedor, lote…" className="w-full h-10 rounded-xl border border-gray-200 pl-8 pr-3 text-sm bg-white"/>
-        {busq&&<button onClick={()=>sBusq("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">✕</button>}
-      </div>
-      {/* Filtros */}
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        <select value={filtProv} onChange={e=>setFP(e.target.value)} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs flex-shrink-0">
-          <option value="">Todos los proveedores</option>
-          {provs.map(p=><option key={p} value={p}>{p}</option>)}
-        </select>
-        <select value={filtRes} onChange={e=>setFR(e.target.value)} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs flex-shrink-0">
-          <option value="">Todos los resultados</option>
-          <option value="aprobado">✓ Aprobado</option>
-          <option value="observado">⚠ Observado</option>
-          <option value="rechazado">✕ Rechazado</option>
-        </select>
-        {(busq||filtProv||filtRes)&&<button onClick={()=>{sBusq("");setFP("");setFR("");}} className="h-8 px-3 rounded-lg bg-red-100 text-red-600 text-xs font-medium flex-shrink-0">Limpiar</button>}
-      </div>
-      {/* Ordenar */}
-      <div className="flex gap-1 overflow-x-auto pb-1 mt-2">
-        <span className="text-[10px] text-gray-400 flex items-center flex-shrink-0 mr-1">Ordenar:</span>
-        <SortBtn k="fecha" l="Fecha"/><SortBtn k="proveedor" l="Proveedor"/><SortBtn k="producto" l="Producto"/><SortBtn k="resultado" l="Resultado"/><SortBtn k="t_ingreso" l="T° ingreso"/>
-      </div>
-    </div>
-
-    {/* KPIs rápidos */}
-    <div className="px-4 pt-3 grid grid-cols-3 gap-2">
-      {[{l:"Total MP",v:receps.length,c:"text-blue-600"},{l:"✓ Aprobados",v:aprobados,c:"text-green-600"},{l:"✕ Rechazados",v:rechazados,c:rechazados>0?"text-red-600":"text-gray-400"}].map((x,i)=><div key={i} className="bg-white rounded-xl border border-gray-200 p-2 text-center"><div className="text-[10px] text-gray-400">{x.l}</div><div className={`text-lg font-bold ${x.c}`}>{x.v}</div></div>)}
-    </div>
-
-    {/* Resultados */}
-    <div className="px-4 pt-3 flex flex-col gap-2">
-      {ordenados.length===0
-        ?<div className="text-center py-12 text-gray-400"><div className="text-3xl mb-2">📭</div><p className="text-sm">Sin resultados</p></div>
-        :ordenados.map(r=>{
-          const isExp=exp===r.id;const alerta=cAl(r.alertas)>0;
-          const resColor=r.resultado==="aprobado"?"border-green-200 bg-green-50":r.resultado==="rechazado"?"border-red-200 bg-red-50":"border-amber-200 bg-amber-50";
-          const resLabel=r.resultado==="aprobado"?"✓ Aprobado":r.resultado==="rechazado"?"✕ Rechazado":"⚠ Observado";
-          return<div key={r.id} className={cn("rounded-xl border p-3",alerta?"border-red-200":resColor)}>
-            {/* Fila principal */}
-            <div className="flex items-start justify-between gap-2" onClick={()=>setExp(isExp?null:r.id)}>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-sm font-semibold text-gray-800 truncate">{r.producto||"—"}</span>
-                  {alerta&&<ABadge n={cAl(r.alertas)}/>}
-                </div>
-                <p className="text-xs text-gray-500 mt-0.5">{r.proveedor_nombre||"—"}</p>
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <span className="text-[10px] text-gray-400">{fd(r.fecha)} {r.hora}</span>
-                  <span className="text-[10px] text-gray-400">·</span>
-                  <span className="text-[10px] text-gray-400">{r.turno} · {r.responsable}</span>
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full",r.resultado==="aprobado"?"bg-green-100 text-green-700":r.resultado==="rechazado"?"bg-red-100 text-red-700":"bg-amber-100 text-amber-700")}>{resLabel}</span>
-                <span className="text-[10px] text-gray-400">{isExp?"▲":"▼"}</span>
-              </div>
-            </div>
-            {/* Detalle expandible */}
-            {isExp&&<div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-2">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                <div><span className="text-gray-400">Lote / Remito</span><p className="font-medium text-gray-700">{r.remito_lote||"—"}</p></div>
-                <div><span className="text-gray-400">Cantidad</span><p className="font-medium text-gray-700">{r.cantidad_kg||"—"} kg</p></div>
-                <div><span className="text-gray-400">Vencimiento</span><p className="font-medium text-gray-700">{r.vto||"—"}</p></div>
-                <div><span className="text-gray-400">T° ingreso</span><p className={cn("font-semibold",r.alertas?.t_ingreso?"text-red-600":"text-gray-700")}>{r.t_ingreso?`${r.t_ingreso}°C`:"—"}</p></div>
-                <div><span className="text-gray-400">Estado envase</span><p className="font-medium text-gray-700 capitalize">{r.estado_envase||"—"}</p></div>
-                <div><span className="text-gray-400">Rotulado</span><p className={cn("font-medium",r.rotulado_ok?"text-green-600":"text-red-500")}>{r.rotulado_ok?"✓ Correcto":"✕ Incorrecto"}</p></div>
-                <div><span className="text-gray-400">FIFO/FEFO</span><p className={cn("font-medium",r.fifo_ok?"text-green-600":"text-amber-600")}>{r.fifo_ok?"✓ Aplicado":"No verificado"}</p></div>
-                <div><span className="text-gray-400">Responsable</span><p className="font-medium text-gray-700">{r.responsable||"—"}</p></div>
-              </div>
-              {r.observaciones&&<div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 text-xs text-yellow-800"><span className="font-medium">Obs:</span> {r.observaciones}</div>}
-              {r.fotos&&r.fotos.length>0&&<div className="flex gap-2 flex-wrap">{r.fotos.map(f=>{const u=loadFoto(f.id);return u?<img key={f.id} src={u} alt={f.nombre} className="w-16 h-16 rounded-lg object-cover border border-gray-200"/>:<div key={f.id} className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center text-[9px] text-gray-400">📷</div>;})}</div>}
-            </div>}
-          </div>;
-        })}
-      <p className="text-center text-xs text-gray-400 py-2">{ordenados.length} de {receps.length} registros</p>
-    </div>
-  </div>;
-}
-
-// ── BD DESPACHOS ──────────────────────────────────────────────
-type SortDesp="fecha"|"local"|"producto"|"chofer"|"t_despacho";
-
-function BDDespachos({registros,onBack}:{registros:Reg[];onBack:()=>void}){
-  const[busq,sBusq]=useState("");
-  const[filtLocal,setFL]=useState("");const[filtEmb,setFE]=useState("");
-  const[sort,setSort]=useState<SortDesp>("fecha");const[dir,setDir]=useState<SortDir>("desc");
-  const[exp,setExp]=useState<string|null>(null);
-
-  const desps=registros.filter(r=>r.tipo==="despacho") as RDesp[];
-
-  // locales únicos
-  const locales=[...new Set(desps.map(r=>r.local_destino).filter(Boolean))].sort();
-
-  // filtrar + buscar
-  const filtrados=desps.filter(r=>{
-    const q=busq.toLowerCase();
-    const matchQ=!q||(r.producto?.toLowerCase().includes(q)||r.local_destino?.toLowerCase().includes(q)||r.chofer?.toLowerCase().includes(q)||r.patente?.toLowerCase().includes(q)||r.lote?.toLowerCase().includes(q));
-    const matchL=!filtLocal||r.local_destino===filtLocal;
-    const matchE=!filtEmb||r.estado_embalaje===filtEmb;
-    return matchQ&&matchL&&matchE;
-  });
-
-  // ordenar
-  const ordenados=[...filtrados].sort((a,b)=>{
-    let va:string="",vb:string="";
-    if(sort==="fecha")va=a.fecha+a.hora,vb=b.fecha+b.hora;
-    else if(sort==="local")va=a.local_destino||"",vb=b.local_destino||"";
-    else if(sort==="producto")va=a.producto||"",vb=b.producto||"";
-    else if(sort==="chofer")va=a.chofer||"",vb=b.chofer||"";
-    else if(sort==="t_despacho")va=String(parseFloat(a.t_despacho)||0).padStart(6,"0"),vb=String(parseFloat(b.t_despacho)||0).padStart(6,"0");
-    return dir==="asc"?va.localeCompare(vb):vb.localeCompare(va);
-  });
-
-  function toggleSort(s:SortDesp){if(sort===s)setDir(d=>d==="asc"?"desc":"asc");else{setSort(s);setDir("asc");}}
-  function SortBtn({k,l}:{k:SortDesp;l:string}){return<button onClick={()=>toggleSort(k)} className={cn("px-2 py-1 rounded-lg text-[10px] font-medium border whitespace-nowrap",sort===k?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-600 border-gray-200")}>{l}{sort===k?(dir==="asc"?" ↑":" ↓"):""}</button>;}
-
-  // stats
-  const totalUnid=desps.reduce((a,r)=>a+(parseFloat(r.cantidad)||0),0);
-  const conAlerta=desps.filter(r=>cAl(r.alertas)>0).length;
-  const chofUniq=[...new Set(desps.map(r=>r.chofer).filter(Boolean))].length;
-
-  return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-24">
-    {/* Header */}
-    <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
-      <div className="flex items-center gap-3 mb-3">
-        <button onClick={onBack} className="text-gray-400 p-1 text-lg">←</button>
-        <div className="flex-1"><p className="text-base font-bold text-gray-800">📦 BD Despachos</p><p className="text-xs text-gray-400">{desps.length} despachos · {totalUnid.toFixed(0)} unidades</p></div>
-      </div>
-      {/* Buscador */}
-      <div className="relative mb-2">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
-        <input value={busq} onChange={e=>sBusq(e.target.value)} placeholder="Buscar producto, local, chofer, patente, lote…" className="w-full h-10 rounded-xl border border-gray-200 pl-8 pr-3 text-sm bg-white"/>
-        {busq&&<button onClick={()=>sBusq("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">✕</button>}
-      </div>
-      {/* Filtros */}
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        <select value={filtLocal} onChange={e=>setFL(e.target.value)} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs flex-shrink-0">
-          <option value="">Todos los locales</option>
-          {locales.map(l=><option key={l} value={l}>{l}</option>)}
-        </select>
-        <select value={filtEmb} onChange={e=>setFE(e.target.value)} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs flex-shrink-0">
-          <option value="">Todo embalaje</option>
-          <option value="integro">✓ Íntegro</option>
-          <option value="con_dano">⚠ Con daño</option>
-        </select>
-        {(busq||filtLocal||filtEmb)&&<button onClick={()=>{sBusq("");setFL("");setFE("");}} className="h-8 px-3 rounded-lg bg-red-100 text-red-600 text-xs font-medium flex-shrink-0">Limpiar</button>}
-      </div>
-      {/* Ordenar */}
-      <div className="flex gap-1 overflow-x-auto pb-1 mt-2">
-        <span className="text-[10px] text-gray-400 flex items-center flex-shrink-0 mr-1">Ordenar:</span>
-        <SortBtn k="fecha" l="Fecha"/><SortBtn k="local" l="Local"/><SortBtn k="producto" l="Producto"/><SortBtn k="chofer" l="Chofer"/><SortBtn k="t_despacho" l="T° desp."/>
-      </div>
-    </div>
-
-    {/* KPIs rápidos */}
-    <div className="px-4 pt-3 grid grid-cols-3 gap-2">
-      {[{l:"Despachos",v:desps.length,c:"text-blue-600"},{l:"Choferes",v:chofUniq,c:"text-gray-700"},{l:"⚠ Alertas",v:conAlerta,c:conAlerta>0?"text-red-600":"text-gray-400"}].map((x,i)=><div key={i} className="bg-white rounded-xl border border-gray-200 p-2 text-center"><div className="text-[10px] text-gray-400">{x.l}</div><div className={`text-lg font-bold ${x.c}`}>{x.v}</div></div>)}
-    </div>
-
-    {/* Tabla / Cards */}
-    <div className="px-4 pt-3 flex flex-col gap-2">
-      {ordenados.length===0
-        ?<div className="text-center py-12 text-gray-400"><div className="text-3xl mb-2">📭</div><p className="text-sm">Sin resultados</p></div>
-        :ordenados.map(r=>{
-          const isExp=exp===r.id;const alerta=cAl(r.alertas)>0;
-          const tNC=r.t_despacho!==""&&parseFloat(r.t_despacho)>-17;
-          return<div key={r.id} className={cn("rounded-xl border p-3",alerta?"border-red-200 bg-red-50":"border-gray-200 bg-white")}>
-            <div className="flex items-start justify-between gap-2" onClick={()=>setExp(isExp?null:r.id)}>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-sm font-semibold text-gray-800 truncate">{r.producto||"—"}</span>
-                  {alerta&&<ABadge n={cAl(r.alertas)}/>}
-                </div>
-                <p className="text-xs text-gray-500 mt-0.5">📍 {r.local_destino||"—"}</p>
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <span className="text-[10px] text-gray-400">{fd(r.fecha)} {r.hora}</span>
-                  <span className="text-[10px] text-gray-400">· 🚛 {r.chofer||"—"} · {r.patente||"—"}</span>
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                <span className={cn("text-xs font-bold",tNC?"text-red-600":"text-blue-600")}>{r.t_despacho?`${r.t_despacho}°C`:"—"}</span>
-                <span className="text-[10px] text-gray-400">{isExp?"▲":"▼"}</span>
-              </div>
-            </div>
-            {/* Detalle expandible */}
-            {isExp&&<div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-2">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                <div><span className="text-gray-400">Lote</span><p className="font-medium text-gray-700">{r.lote||"—"}</p></div>
-                <div><span className="text-gray-400">Cantidad</span><p className="font-medium text-gray-700">{r.cantidad||"—"} und.</p></div>
-                <div><span className="text-gray-400">T° despacho</span><p className={cn("font-semibold",tNC?"text-red-600":"text-gray-700")}>{r.t_despacho?`${r.t_despacho}°C`:"—"} {tNC&&"⚠"}</p></div>
-                <div><span className="text-gray-400">T° transporte</span><p className="font-medium text-gray-700">{r.t_transporte?`${r.t_transporte}°C`:"—"}</p></div>
-                <div><span className="text-gray-400">Etiquetado</span><p className={cn("font-medium",r.etiquetado_ok?"text-green-600":"text-red-500")}>{r.etiquetado_ok?"✓ Correcto":"✕ Incorrecto"}</p></div>
-                <div><span className="text-gray-400">Embalaje</span><p className={cn("font-medium",r.estado_embalaje==="integro"?"text-green-600":"text-amber-600")}>{r.estado_embalaje==="integro"?"✓ Íntegro":"⚠ Con daño"}</p></div>
-                <div><span className="text-gray-400">Chofer</span><p className="font-medium text-gray-700">{r.chofer||"—"}</p></div>
-                <div><span className="text-gray-400">Patente</span><p className="font-medium text-gray-700">{r.patente||"—"}</p></div>
-                <div><span className="text-gray-400">Turno</span><p className="font-medium text-gray-700">{r.turno} · {r.responsable}</p></div>
-              </div>
-              {r.observaciones&&<div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 text-xs text-yellow-800"><span className="font-medium">Obs:</span> {r.observaciones}</div>}
-              {r.fotos&&r.fotos.length>0&&<div className="flex gap-2 flex-wrap">{r.fotos.map(f=>{const u=loadFoto(f.id);return u?<img key={f.id} src={u} alt={f.nombre} className="w-16 h-16 rounded-lg object-cover border border-gray-200"/>:<div key={f.id} className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center text-[9px] text-gray-400">📷</div>;})}</div>}
-            </div>}
-          </div>;
-        })}
-      <p className="text-center text-xs text-gray-400 py-2">{ordenados.length} de {desps.length} registros</p>
-    </div>
-  </div>;
-}
-
 // ── VISTA SEMANA ──────────────────────────────────────────────
 function VSem({u,mes,sem,onBack}:{u:Usuario;mes:MesI;sem:SemI;onBack:()=>void}){
-  const[dia,sDia]=useState<DiaI|null>(null);
-  const[vista,sV]=useState<"dias"|"resumen"|"dashboard"|"bd_recep"|"bd_desp">("dias");
-  const[allRegs,sAll]=useState<Reg[]>([]);const[cg,sCg]=useState(false);const[notas,sNotas]=useState<Record<string,string>>({});const[elim,sElim]=useState<Set<string>>(new Set());
+  const[dia,sDia]=useState<DiaI|null>(null);const[vista,sV]=useState<"dias"|"resumen"|"dashboard">("dias");const[allRegs,sAll]=useState<Reg[]>([]);const[cg,sCg]=useState(false);const[notas,sNotas]=useState<Record<string,string>>({});const[elim,sElim]=useState<Set<string>>(new Set());
   const HOY=hoy();
   useEffect(()=>{(async()=>{sCg(true);const rs:Reg[]=[];for(const d of sem.dias){if(!d.fecha||d.fecha>HOY)continue;const dr=await loadDia(mes.id,sem.semana,d.fecha);rs.push(...dr);}sAll(rs);sCg(false);})();},[]);
   if(dia)return<VDia u={u} mes={mes} sem={sem} dia={dia} onBack={()=>sDia(null)}/>;
-  if(vista==="bd_recep")return<BDRecepcion registros={allRegs} onBack={()=>sV("dias")}/>;
-  if(vista==="bd_desp")return<BDDespachos registros={allRegs} onBack={()=>sV("dias")}/>;
   const titulo=`${mes.label} · Semana ${sem.semana}`;
-  const nRecep=allRegs.filter(r=>r.tipo==="recepcion").length;
-  const nDesp=allRegs.filter(r=>r.tipo==="despacho").length;
   return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-20">
     <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
       <div className="flex items-center gap-3"><button onClick={onBack} className="text-gray-400 p-1">←</button><div><p className="text-xs text-gray-400">{mes.label}</p><p className="text-base font-bold text-gray-800">Semana {sem.semana}</p></div>{cg&&<Spin/>}</div>
-      <div className="flex gap-1 mt-2 bg-gray-100 rounded-xl p-1 overflow-x-auto">
-        {([{k:"dias",l:"📅 Días"},{k:"resumen",l:"📊 Resumen"},{k:"dashboard",l:"📈 Dashboard"}] as const).map(x=><button key={x.k} onClick={()=>sV(x.k)} className={cn("flex-1 text-[10px] font-medium py-1.5 rounded-lg whitespace-nowrap",vista===x.k?"bg-white text-gray-800 shadow-sm":"text-gray-500")}>{x.l}</button>)}
-      </div>
-      {/* Accesos directos BD */}
-      <div className="flex gap-2 mt-2">
-        <button onClick={()=>sV("bd_recep")} className={cn("flex-1 h-9 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5",nRecep>0?"border-green-300 bg-green-50 text-green-700 hover:bg-green-100":"border-gray-200 bg-white text-gray-500 hover:border-green-300")}>
-          🚚 MP Recibida <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",nRecep>0?"bg-green-200 text-green-700":"bg-gray-100 text-gray-400")}>{nRecep}</span>
-        </button>
-        <button onClick={()=>sV("bd_desp")} className={cn("flex-1 h-9 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5",nDesp>0?"border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100":"border-gray-200 bg-white text-gray-500 hover:border-blue-300")}>
-          📦 Despachos <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",nDesp>0?"bg-blue-200 text-blue-700":"bg-gray-100 text-gray-400")}>{nDesp}</span>
-        </button>
-      </div>
+      <div className="flex gap-1 mt-2 bg-gray-100 rounded-xl p-1">{([{k:"dias",l:"Días"},{k:"resumen",l:"Resumen"},{k:"dashboard",l:"Dashboard"}] as const).map(x=><button key={x.k} onClick={()=>sV(x.k)} className={cn("flex-1 text-xs font-medium py-1.5 rounded-lg",vista===x.k?"bg-white text-gray-800 shadow-sm":"text-gray-500")}>{x.l}</button>)}</div>
     </div>
     {vista==="dias"&&<div className="p-4"><div className="grid grid-cols-7 gap-1 mb-2">{DN.map(d=><div key={d} className="text-center text-[10px] font-semibold text-gray-400 py-1">{d}</div>)}</div><div className="grid grid-cols-7 gap-1">{sem.dias.map((d,i)=>{if(d.dayOfMonth===-1)return<div key={i}/>;const eH=d.fecha===HOY;const eF=d.fecha>HOY;return<button key={i} onClick={()=>!eF&&sDia(d)} disabled={eF} className={cn("aspect-square rounded-xl flex flex-col items-center justify-center text-sm font-semibold border",eH?"bg-blue-500 text-white border-blue-500 shadow-sm":eF?"bg-gray-50 text-gray-300 border-gray-100 cursor-default":"bg-white text-gray-700 border-gray-200 hover:border-blue-400 active:scale-95")}>{d.dayOfMonth}{eH&&<span className="text-[8px] opacity-80">hoy</span>}</button>;})}</div><p className="text-xs text-gray-400 text-center mt-4">Tocá un día para ver o cargar registros</p></div>}
     {vista==="resumen"&&<div className="px-4 pt-4"><ResumenPanel registros={allRegs} titulo={titulo} isCalidad={u.rol==="calidad"} notas={notas} onNota={(id,v)=>sNotas(p=>({...p,[id]:v}))} eliminados={elim} onElim={id=>sElim(p=>new Set([...p,id]))} onRestore={id=>sElim(p=>{const n=new Set(p);n.delete(id);return n;})}/></div>}
@@ -1086,28 +1069,14 @@ function VSem({u,mes,sem,onBack}:{u:Usuario;mes:MesI;sem:SemI;onBack:()=>void}){
 
 // ── VISTA MES ─────────────────────────────────────────────────
 function VMes({u,mes,onBack}:{u:Usuario;mes:MesI;onBack:()=>void}){
-  const[sem,sSem]=useState<SemI|null>(null);
-  const[vista,sV]=useState<"semanas"|"resumen"|"dashboard"|"bd_recep"|"bd_desp">("semanas");
-  const[allRegs,sAll]=useState<Reg[]>([]);const[cg,sCg]=useState(false);const[notas,sNotas]=useState<Record<string,string>>({});const[elim,sElim]=useState<Set<string>>(new Set());
+  const[sem,sSem]=useState<SemI|null>(null);const[vista,sV]=useState<"semanas"|"resumen"|"dashboard">("semanas");const[allRegs,sAll]=useState<Reg[]>([]);const[cg,sCg]=useState(false);const[notas,sNotas]=useState<Record<string,string>>({});const[elim,sElim]=useState<Set<string>>(new Set());
   const HOY=hoy();
   useEffect(()=>{(async()=>{sCg(true);const rs:Reg[]=[];for(const s of mes.semanas)for(const d of s.dias){if(!d.fecha||d.fecha>HOY)continue;const dr=await loadDia(mes.id,s.semana,d.fecha);rs.push(...dr);}sAll(rs);sCg(false);})();},[]);
   if(sem)return<VSem u={u} mes={mes} sem={sem} onBack={()=>sSem(null)}/>;
-  if(vista==="bd_recep")return<BDRecepcion registros={allRegs} onBack={()=>sV("semanas")}/>;
-  if(vista==="bd_desp")return<BDDespachos registros={allRegs} onBack={()=>sV("semanas")}/>;
-  const nRecep=allRegs.filter(r=>r.tipo==="recepcion").length;
-  const nDesp=allRegs.filter(r=>r.tipo==="despacho").length;
   return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-20">
     <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
       <div className="flex items-center gap-3"><button onClick={onBack} className="text-gray-400 p-1">←</button><p className="text-base font-bold text-gray-800 flex-1">{mes.label}</p>{cg&&<Spin/>}</div>
-      <div className="flex gap-1 mt-2 bg-gray-100 rounded-xl p-1">{([{k:"semanas",l:"Semanas"},{k:"resumen",l:"Resumen"},{k:"dashboard",l:"Dashboard"}] as const).map(x=><button key={x.k} onClick={()=>sV(x.k)} className={cn("flex-1 text-xs font-medium py-1.5 rounded-lg",vista===x.k?"bg-white text-gray-800 shadow-sm":"text-gray-500")}>{x.l}</button>)}</div>
-      <div className="flex gap-2 mt-2">
-        <button onClick={()=>sV("bd_recep")} className={cn("flex-1 h-9 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5",nRecep>0?"border-green-300 bg-green-50 text-green-700":"border-gray-200 bg-white text-gray-500")}>
-          🚚 MP del mes <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",nRecep>0?"bg-green-200 text-green-700":"bg-gray-100 text-gray-400")}>{nRecep}</span>
-        </button>
-        <button onClick={()=>sV("bd_desp")} className={cn("flex-1 h-9 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5",nDesp>0?"border-blue-300 bg-blue-50 text-blue-700":"border-gray-200 bg-white text-gray-500")}>
-          📦 Despachos <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",nDesp>0?"bg-blue-200 text-blue-700":"bg-gray-100 text-gray-400")}>{nDesp}</span>
-        </button>
-      </div>
+      <div className="flex gap-1 mt-2 bg-gray-100 rounded-xl p-1">{([{k:"semanas",l:"Semanas"},{k:"resumen",l:"Resumen mes"},{k:"dashboard",l:"Dashboard"}] as const).map(x=><button key={x.k} onClick={()=>sV(x.k)} className={cn("flex-1 text-xs font-medium py-1.5 rounded-lg",vista===x.k?"bg-white text-gray-800 shadow-sm":"text-gray-500")}>{x.l}</button>)}</div>
     </div>
     {vista==="semanas"&&<div className="p-4">
       <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-4"><div className="grid grid-cols-7 gap-1 mb-2">{DN.map(d=><div key={d} className="text-center text-[10px] font-semibold text-gray-400">{d}</div>)}</div>{mes.semanas.map(s=><div key={s.semana} className="grid grid-cols-7 gap-1 mb-1">{s.dias.map((d,i)=>{if(d.dayOfMonth===-1)return<div key={i}/>;const eH=d.fecha===HOY;const eF=d.fecha>HOY;return<div key={i} onClick={()=>!eF&&sSem(s)} className={cn("aspect-square rounded-lg flex items-center justify-center text-xs cursor-pointer",eH?"bg-blue-500 text-white font-bold":eF?"text-gray-300":"text-gray-700 hover:bg-blue-50 font-medium")}>{d.dayOfMonth}</div>;})}</div>)}</div>
