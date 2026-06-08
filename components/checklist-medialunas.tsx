@@ -50,14 +50,28 @@ type RTemp=RTempML|RTempPan;
 interface RMedialunas extends Base{tipo:"medialunas";
   variedad:"manteca"|"grasa"|"";lote_harina:string;
   maquinista_12mil:string;maquinista_lam_auto:string;
+  // Amasado
+  agua_chiller_kg:string;hielo_kg:string;t_agua_chiller:string;tiempo_amasado:string;
+  // Ingreso cámara
+  num_carro:string;fecha_ingreso_camara:string;hora_ingreso_camara:string;
+  // Laminado manual
+  num_carro_laminado:string;fecha_salida_camara:string;hora_salida_camara:string;hojaldre_ok:boolean;
+  // Laminado automático
+  calibre_inicio:string;calibre_fin:string;ancho_cm:string;
+  // Medialunera
+  calibre_medialunera:string;
   // 15 muestras: 5 inicio, 5 medio, 5 fin
   muestras_inicio:string[];muestras_medio:string[];muestras_fin:string[];
   prom_inicio:number;prom_medio:number;prom_fin:number;prom_total:number;desvio_pct:number;
   ajustado:string;
   // Fermentador
   t_fermentador:string;humedad_fermentador:string;tiempo_fermentado:string;
+  num_carro_fermentador:string;hora_ingreso_fermentador:string;hora_salida_fermentador:string;
   // Abatidor
-  t_abatido:string;t_salida_abatidor:string;tiempo_abatido:string;
+  t_abatidor:string;t_salida_abatidor:string;tiempo_abatido:string;
+  num_carro_abatidor:string;  // conecta con fermentador
+  // Envasado
+  bandejas_unidades_ok:boolean;etiqueta_vigente:boolean;t_medialunas_envasar:string;obs_envasado:string;
   // Cámara final
   t_camara_final:string;
   // Sensorial
@@ -317,9 +331,17 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
     // Pesos
     muestras_inicio:["","","","",""],muestras_medio:["","","","",""],muestras_fin:["","","","",""],
     ajustado:"",
+    // Fermentador
     t_fermentador:"",humedad_fermentador:"",tiempo_fermentado:"",
-    t_abatido:"",t_salida_abatidor:"",tiempo_abatido:"",
+    num_carro_fermentador:"",hora_ingreso_fermentador:"",hora_salida_fermentador:"",
+    // Abatidor
+    t_abatidor:"",t_salida_abatidor:"",tiempo_abatido:"",
+    num_carro_abatidor:"",
+    // Envasado
+    bandejas_unidades_ok:false,etiqueta_vigente:false,t_medialunas_envasar:"",obs_envasado:"",
+    // Cámara final
     t_camara_final:"",
+    // Sensorial
     color_ok:false,forma_ok:false,textura_ok:false,sensorial_obs:"",
     pct_recupero:"",observaciones:"",fotos:[] as FotoMeta[]});
   const[g,sG]=useState(false);
@@ -333,16 +355,19 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
   const dv=pesoObj>0&&pt>0?Math.round(Math.abs(pt-pesoObj)/pesoObj*100*10)/10:0;
   const aPeso=pt>0&&Math.abs(pt-pesoObj)>5;
   const aFerment=d.t_fermentador!==""&&(parseFloat(d.t_fermentador)<25||parseFloat(d.t_fermentador)>31);
-  const aAbat=d.t_abatido!==""&&(isMant?(parseFloat(d.t_abatido)>-22||parseFloat(d.t_abatido)<-26):(isGrasa?(parseFloat(d.t_abatido)>-16||parseFloat(d.t_abatido)<-20):false));
+  const aHumedad=d.humedad_fermentador!==""&&(parseFloat(d.humedad_fermentador)<85||parseFloat(d.humedad_fermentador)>91);
+  const aTiempoFerm=d.tiempo_fermentado!==""&&(parseFloat(d.tiempo_fermentado)<55||parseFloat(d.tiempo_fermentado)>65);
+  const aAbat=d.t_abatidor!==""&&(isMant?(parseFloat(d.t_abatidor)>-22||parseFloat(d.t_abatidor)<-26):(isGrasa?(parseFloat(d.t_abatidor)>-16||parseFloat(d.t_abatidor)<-20):false));
   const aSalida=isMant&&d.t_salida_abatidor!==""&&parseFloat(d.t_salida_abatidor)>-12;
   const aCamara=d.t_camara_final!==""&&parseFloat(d.t_camara_final)>-17;
   const aRecupero=d.pct_recupero!==""&&parseFloat(d.pct_recupero)>10;
+  const aEnvasado=d.t_medialunas_envasar!==""&&parseFloat(d.t_medialunas_envasar)>-12;
 
   function setMuestra(grupo:"muestras_inicio"|"muestras_medio"|"muestras_fin",idx:number,val:string){sD(p=>{const arr=[...p[grupo]];arr[idx]=val;return{...p,[grupo]:arr};});}
 
   async function sv(){sG(true);onSave({id:gid("ml"),tipo:"medialunas",turno:u.turno,responsable:u.nombre,fecha:hoy(),hora:ahora(),timestamp:new Date().toISOString(),
     prom_inicio:pi,prom_medio:pm,prom_fin:pf,prom_total:pt,desvio_pct:dv,
-    alertas:{peso_nc:aPeso,fermentador_nc:aFerment,t_abatidor_nc:aAbat,t_salida_nc:aSalida,t_camara_nc:aCamara,recupero_exc:aRecupero},...d} as unknown as Reg);sG(false);}
+    alertas:{peso_nc:aPeso,fermentador_nc:aFerment,humedad_nc:aHumedad,tiempo_ferm_nc:aTiempoFerm,t_abatidor_nc:aAbat,t_salida_nc:aSalida,t_camara_nc:aCamara,recupero_exc:aRecupero,t_envasado_nc:aEnvasado}},...d} as unknown as Reg);sG(false);}
 
   return<FW titulo="🥐 Medialunas" sub="P276/P280 · Proceso completo + Pesos" onCancel={onCancel} onSave={sv} g={g} ch={<>
     <div className="flex gap-2">{(["manteca","grasa"] as const).map(x=><button key={x} onClick={()=>sD(p=>({...p,variedad:x}))} className={cn("flex-1 py-2.5 rounded-xl text-sm font-semibold border-2",d.variedad===x?"border-amber-500 bg-amber-50 text-amber-700":"border-gray-200 bg-white text-gray-600")}>{x==="manteca"?"🥐 Manteca (P280)":"🥐 Grasa (P276)"}</button>)}</div>
@@ -356,8 +381,6 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
     </div>
     <Num label="T° agua chiller (°C)" spec="PCC — Parámetro: 1°C a 6°C" value={d.t_agua_chiller} onChange={v=>sD(p=>({...p,t_agua_chiller:v}))} al={d.t_agua_chiller!==""&&(parseFloat(d.t_agua_chiller)<1||parseFloat(d.t_agua_chiller)>6)}/>
     <Num label="Tiempo de amasado (min)" spec="PCC — Parámetro: 25 min ±3" value={d.tiempo_amasado} onChange={v=>sD(p=>({...p,tiempo_amasado:v}))} al={d.tiempo_amasado!==""&&(parseFloat(d.tiempo_amasado)<22||parseFloat(d.tiempo_amasado)>28)}/>
-    <Txt label="Maquinista 12 Mil" value={d.maquinista_12mil} onChange={v=>sD(p=>({...p,maquinista_12mil:v}))} ph="Nombre del operario"/>
-    <Txt label="Maquinista Laminadora Automática" value={d.maquinista_lam_auto} onChange={v=>sD(p=>({...p,maquinista_lam_auto:v}))} ph="Nombre del operario"/>
 
     {/* 2 — INGRESO A CÁMARA */}
     <SecH label="❄️ 2. Ingreso a cámara (reposo masa)" color="text-cyan-700"/>
@@ -386,6 +409,7 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
 
     {/* 4 — LAMINADO AUTOMÁTICO */}
     <SecH label="⚙️ 4. Laminado automático" color="text-orange-700"/>
+    <Txt label="Maquinista Laminadora Automática" value={d.maquinista_lam_auto} onChange={v=>sD(p=>({...p,maquinista_lam_auto:v}))} ph="Nombre del operario"/>
     <div className="grid grid-cols-3 gap-2">
       <Num label="Calibre inicio" spec="PC" value={d.calibre_inicio} onChange={v=>sD(p=>({...p,calibre_inicio:v}))}/>
       <Num label="Calibre fin" spec="PC" value={d.calibre_fin} onChange={v=>sD(p=>({...p,calibre_fin:v}))}/>
@@ -394,6 +418,7 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
 
     {/* 5 — MEDIALUNERA */}
     <SecH label="🥐 5. Medialunera" color="text-amber-700"/>
+    <Txt label="Maquinista 12 Mil" value={d.maquinista_12mil} onChange={v=>sD(p=>({...p,maquinista_12mil:v}))} ph="Nombre del operario"/>
     <Num label="Calibre medialunera" spec="PC" value={d.calibre_medialunera} onChange={v=>sD(p=>({...p,calibre_medialunera:v}))}/>
 
     {/* Pesos — 15 muestras */}
