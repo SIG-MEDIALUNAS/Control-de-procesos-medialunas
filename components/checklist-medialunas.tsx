@@ -789,17 +789,294 @@ function VDia({u,mes,sem,dia,onBack}:{u:Usuario;mes:MesI;sem:SemI;dia:DiaI;onBac
   </div>;
 }
 
+// ── BD RECEPCIÓN MP ───────────────────────────────────────────
+type SortRecep="fecha"|"proveedor"|"producto"|"resultado"|"t_ingreso";
+type SortDir="asc"|"desc";
+
+function BDRecepcion({registros,onBack}:{registros:Reg[];onBack:()=>void}){
+  const[busq,sBusq]=useState("");
+  const[filtProv,setFP]=useState("");const[filtRes,setFR]=useState("");
+  const[sort,setSort]=useState<SortRecep>("fecha");const[dir,setDir]=useState<SortDir>("desc");
+  const[exp,setExp]=useState<string|null>(null);
+
+  const receps=registros.filter(r=>r.tipo==="recepcion") as RRecep[];
+
+  // proveedores únicos para filtro
+  const provs=[...new Set(receps.map(r=>r.proveedor_nombre).filter(Boolean))].sort();
+
+  // filtrar + buscar
+  const filtrados=receps.filter(r=>{
+    const q=busq.toLowerCase();
+    const matchQ=!q||(r.producto?.toLowerCase().includes(q)||r.proveedor_nombre?.toLowerCase().includes(q)||r.remito_lote?.toLowerCase().includes(q)||r.observaciones?.toLowerCase().includes(q));
+    const matchP=!filtProv||r.proveedor_nombre===filtProv;
+    const matchR=!filtRes||r.resultado===filtRes;
+    return matchQ&&matchP&&matchR;
+  });
+
+  // ordenar
+  const ordenados=[...filtrados].sort((a,b)=>{
+    let va:string="",vb:string="";
+    if(sort==="fecha")va=a.fecha+a.hora,vb=b.fecha+b.hora;
+    else if(sort==="proveedor")va=a.proveedor_nombre||"",vb=b.proveedor_nombre||"";
+    else if(sort==="producto")va=a.producto||"",vb=b.producto||"";
+    else if(sort==="resultado")va=a.resultado||"",vb=b.resultado||"";
+    else if(sort==="t_ingreso")va=String(parseFloat(a.t_ingreso)||0).padStart(6,"0"),vb=String(parseFloat(b.t_ingreso)||0).padStart(6,"0");
+    return dir==="asc"?va.localeCompare(vb):vb.localeCompare(va);
+  });
+
+  function toggleSort(s:SortRecep){if(sort===s)setDir(d=>d==="asc"?"desc":"asc");else{setSort(s);setDir("asc");}}
+  function SortBtn({k,l}:{k:SortRecep;l:string}){return<button onClick={()=>toggleSort(k)} className={cn("px-2 py-1 rounded-lg text-[10px] font-medium border whitespace-nowrap",sort===k?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-600 border-gray-200")}>{l}{sort===k?(dir==="asc"?" ↑":" ↓"):""}</button>;}
+
+  // stats
+  const aprobados=receps.filter(r=>r.resultado==="aprobado").length;
+  const rechazados=receps.filter(r=>r.resultado==="rechazado").length;
+  const totalKg=receps.reduce((a,r)=>a+(parseFloat(r.cantidad_kg)||0),0);
+
+  return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-24">
+    {/* Header */}
+    <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
+      <div className="flex items-center gap-3 mb-3">
+        <button onClick={onBack} className="text-gray-400 p-1 text-lg">←</button>
+        <div className="flex-1"><p className="text-base font-bold text-gray-800">🚚 BD Recepción MP</p><p className="text-xs text-gray-400">{receps.length} registros · {totalKg.toFixed(0)} kg total</p></div>
+      </div>
+      {/* Buscador */}
+      <div className="relative mb-2">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+        <input value={busq} onChange={e=>sBusq(e.target.value)} placeholder="Buscar producto, proveedor, lote…" className="w-full h-10 rounded-xl border border-gray-200 pl-8 pr-3 text-sm bg-white"/>
+        {busq&&<button onClick={()=>sBusq("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">✕</button>}
+      </div>
+      {/* Filtros */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        <select value={filtProv} onChange={e=>setFP(e.target.value)} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs flex-shrink-0">
+          <option value="">Todos los proveedores</option>
+          {provs.map(p=><option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={filtRes} onChange={e=>setFR(e.target.value)} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs flex-shrink-0">
+          <option value="">Todos los resultados</option>
+          <option value="aprobado">✓ Aprobado</option>
+          <option value="observado">⚠ Observado</option>
+          <option value="rechazado">✕ Rechazado</option>
+        </select>
+        {(busq||filtProv||filtRes)&&<button onClick={()=>{sBusq("");setFP("");setFR("");}} className="h-8 px-3 rounded-lg bg-red-100 text-red-600 text-xs font-medium flex-shrink-0">Limpiar</button>}
+      </div>
+      {/* Ordenar */}
+      <div className="flex gap-1 overflow-x-auto pb-1 mt-2">
+        <span className="text-[10px] text-gray-400 flex items-center flex-shrink-0 mr-1">Ordenar:</span>
+        <SortBtn k="fecha" l="Fecha"/><SortBtn k="proveedor" l="Proveedor"/><SortBtn k="producto" l="Producto"/><SortBtn k="resultado" l="Resultado"/><SortBtn k="t_ingreso" l="T° ingreso"/>
+      </div>
+    </div>
+
+    {/* KPIs rápidos */}
+    <div className="px-4 pt-3 grid grid-cols-3 gap-2">
+      {[{l:"Total MP",v:receps.length,c:"text-blue-600"},{l:"✓ Aprobados",v:aprobados,c:"text-green-600"},{l:"✕ Rechazados",v:rechazados,c:rechazados>0?"text-red-600":"text-gray-400"}].map((x,i)=><div key={i} className="bg-white rounded-xl border border-gray-200 p-2 text-center"><div className="text-[10px] text-gray-400">{x.l}</div><div className={`text-lg font-bold ${x.c}`}>{x.v}</div></div>)}
+    </div>
+
+    {/* Resultados */}
+    <div className="px-4 pt-3 flex flex-col gap-2">
+      {ordenados.length===0
+        ?<div className="text-center py-12 text-gray-400"><div className="text-3xl mb-2">📭</div><p className="text-sm">Sin resultados</p></div>
+        :ordenados.map(r=>{
+          const isExp=exp===r.id;const alerta=cAl(r.alertas)>0;
+          const resColor=r.resultado==="aprobado"?"border-green-200 bg-green-50":r.resultado==="rechazado"?"border-red-200 bg-red-50":"border-amber-200 bg-amber-50";
+          const resLabel=r.resultado==="aprobado"?"✓ Aprobado":r.resultado==="rechazado"?"✕ Rechazado":"⚠ Observado";
+          return<div key={r.id} className={cn("rounded-xl border p-3",alerta?"border-red-200":resColor)}>
+            {/* Fila principal */}
+            <div className="flex items-start justify-between gap-2" onClick={()=>setExp(isExp?null:r.id)}>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-sm font-semibold text-gray-800 truncate">{r.producto||"—"}</span>
+                  {alerta&&<ABadge n={cAl(r.alertas)}/>}
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5">{r.proveedor_nombre||"—"}</p>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <span className="text-[10px] text-gray-400">{fd(r.fecha)} {r.hora}</span>
+                  <span className="text-[10px] text-gray-400">·</span>
+                  <span className="text-[10px] text-gray-400">{r.turno} · {r.responsable}</span>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full",r.resultado==="aprobado"?"bg-green-100 text-green-700":r.resultado==="rechazado"?"bg-red-100 text-red-700":"bg-amber-100 text-amber-700")}>{resLabel}</span>
+                <span className="text-[10px] text-gray-400">{isExp?"▲":"▼"}</span>
+              </div>
+            </div>
+            {/* Detalle expandible */}
+            {isExp&&<div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-2">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                <div><span className="text-gray-400">Lote / Remito</span><p className="font-medium text-gray-700">{r.remito_lote||"—"}</p></div>
+                <div><span className="text-gray-400">Cantidad</span><p className="font-medium text-gray-700">{r.cantidad_kg||"—"} kg</p></div>
+                <div><span className="text-gray-400">Vencimiento</span><p className="font-medium text-gray-700">{r.vto||"—"}</p></div>
+                <div><span className="text-gray-400">T° ingreso</span><p className={cn("font-semibold",r.alertas?.t_ingreso?"text-red-600":"text-gray-700")}>{r.t_ingreso?`${r.t_ingreso}°C`:"—"}</p></div>
+                <div><span className="text-gray-400">Estado envase</span><p className="font-medium text-gray-700 capitalize">{r.estado_envase||"—"}</p></div>
+                <div><span className="text-gray-400">Rotulado</span><p className={cn("font-medium",r.rotulado_ok?"text-green-600":"text-red-500")}>{r.rotulado_ok?"✓ Correcto":"✕ Incorrecto"}</p></div>
+                <div><span className="text-gray-400">FIFO/FEFO</span><p className={cn("font-medium",r.fifo_ok?"text-green-600":"text-amber-600")}>{r.fifo_ok?"✓ Aplicado":"No verificado"}</p></div>
+                <div><span className="text-gray-400">Responsable</span><p className="font-medium text-gray-700">{r.responsable||"—"}</p></div>
+              </div>
+              {r.observaciones&&<div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 text-xs text-yellow-800"><span className="font-medium">Obs:</span> {r.observaciones}</div>}
+              {r.fotos&&r.fotos.length>0&&<div className="flex gap-2 flex-wrap">{r.fotos.map(f=>{const u=loadFoto(f.id);return u?<img key={f.id} src={u} alt={f.nombre} className="w-16 h-16 rounded-lg object-cover border border-gray-200"/>:<div key={f.id} className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center text-[9px] text-gray-400">📷</div>;})}</div>}
+            </div>}
+          </div>;
+        })}
+      <p className="text-center text-xs text-gray-400 py-2">{ordenados.length} de {receps.length} registros</p>
+    </div>
+  </div>;
+}
+
+// ── BD DESPACHOS ──────────────────────────────────────────────
+type SortDesp="fecha"|"local"|"producto"|"chofer"|"t_despacho";
+
+function BDDespachos({registros,onBack}:{registros:Reg[];onBack:()=>void}){
+  const[busq,sBusq]=useState("");
+  const[filtLocal,setFL]=useState("");const[filtEmb,setFE]=useState("");
+  const[sort,setSort]=useState<SortDesp>("fecha");const[dir,setDir]=useState<SortDir>("desc");
+  const[exp,setExp]=useState<string|null>(null);
+
+  const desps=registros.filter(r=>r.tipo==="despacho") as RDesp[];
+
+  // locales únicos
+  const locales=[...new Set(desps.map(r=>r.local_destino).filter(Boolean))].sort();
+
+  // filtrar + buscar
+  const filtrados=desps.filter(r=>{
+    const q=busq.toLowerCase();
+    const matchQ=!q||(r.producto?.toLowerCase().includes(q)||r.local_destino?.toLowerCase().includes(q)||r.chofer?.toLowerCase().includes(q)||r.patente?.toLowerCase().includes(q)||r.lote?.toLowerCase().includes(q));
+    const matchL=!filtLocal||r.local_destino===filtLocal;
+    const matchE=!filtEmb||r.estado_embalaje===filtEmb;
+    return matchQ&&matchL&&matchE;
+  });
+
+  // ordenar
+  const ordenados=[...filtrados].sort((a,b)=>{
+    let va:string="",vb:string="";
+    if(sort==="fecha")va=a.fecha+a.hora,vb=b.fecha+b.hora;
+    else if(sort==="local")va=a.local_destino||"",vb=b.local_destino||"";
+    else if(sort==="producto")va=a.producto||"",vb=b.producto||"";
+    else if(sort==="chofer")va=a.chofer||"",vb=b.chofer||"";
+    else if(sort==="t_despacho")va=String(parseFloat(a.t_despacho)||0).padStart(6,"0"),vb=String(parseFloat(b.t_despacho)||0).padStart(6,"0");
+    return dir==="asc"?va.localeCompare(vb):vb.localeCompare(va);
+  });
+
+  function toggleSort(s:SortDesp){if(sort===s)setDir(d=>d==="asc"?"desc":"asc");else{setSort(s);setDir("asc");}}
+  function SortBtn({k,l}:{k:SortDesp;l:string}){return<button onClick={()=>toggleSort(k)} className={cn("px-2 py-1 rounded-lg text-[10px] font-medium border whitespace-nowrap",sort===k?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-600 border-gray-200")}>{l}{sort===k?(dir==="asc"?" ↑":" ↓"):""}</button>;}
+
+  // stats
+  const totalUnid=desps.reduce((a,r)=>a+(parseFloat(r.cantidad)||0),0);
+  const conAlerta=desps.filter(r=>cAl(r.alertas)>0).length;
+  const chofUniq=[...new Set(desps.map(r=>r.chofer).filter(Boolean))].length;
+
+  return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-24">
+    {/* Header */}
+    <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
+      <div className="flex items-center gap-3 mb-3">
+        <button onClick={onBack} className="text-gray-400 p-1 text-lg">←</button>
+        <div className="flex-1"><p className="text-base font-bold text-gray-800">📦 BD Despachos</p><p className="text-xs text-gray-400">{desps.length} despachos · {totalUnid.toFixed(0)} unidades</p></div>
+      </div>
+      {/* Buscador */}
+      <div className="relative mb-2">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+        <input value={busq} onChange={e=>sBusq(e.target.value)} placeholder="Buscar producto, local, chofer, patente, lote…" className="w-full h-10 rounded-xl border border-gray-200 pl-8 pr-3 text-sm bg-white"/>
+        {busq&&<button onClick={()=>sBusq("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">✕</button>}
+      </div>
+      {/* Filtros */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        <select value={filtLocal} onChange={e=>setFL(e.target.value)} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs flex-shrink-0">
+          <option value="">Todos los locales</option>
+          {locales.map(l=><option key={l} value={l}>{l}</option>)}
+        </select>
+        <select value={filtEmb} onChange={e=>setFE(e.target.value)} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs flex-shrink-0">
+          <option value="">Todo embalaje</option>
+          <option value="integro">✓ Íntegro</option>
+          <option value="con_dano">⚠ Con daño</option>
+        </select>
+        {(busq||filtLocal||filtEmb)&&<button onClick={()=>{sBusq("");setFL("");setFE("");}} className="h-8 px-3 rounded-lg bg-red-100 text-red-600 text-xs font-medium flex-shrink-0">Limpiar</button>}
+      </div>
+      {/* Ordenar */}
+      <div className="flex gap-1 overflow-x-auto pb-1 mt-2">
+        <span className="text-[10px] text-gray-400 flex items-center flex-shrink-0 mr-1">Ordenar:</span>
+        <SortBtn k="fecha" l="Fecha"/><SortBtn k="local" l="Local"/><SortBtn k="producto" l="Producto"/><SortBtn k="chofer" l="Chofer"/><SortBtn k="t_despacho" l="T° desp."/>
+      </div>
+    </div>
+
+    {/* KPIs rápidos */}
+    <div className="px-4 pt-3 grid grid-cols-3 gap-2">
+      {[{l:"Despachos",v:desps.length,c:"text-blue-600"},{l:"Choferes",v:chofUniq,c:"text-gray-700"},{l:"⚠ Alertas",v:conAlerta,c:conAlerta>0?"text-red-600":"text-gray-400"}].map((x,i)=><div key={i} className="bg-white rounded-xl border border-gray-200 p-2 text-center"><div className="text-[10px] text-gray-400">{x.l}</div><div className={`text-lg font-bold ${x.c}`}>{x.v}</div></div>)}
+    </div>
+
+    {/* Tabla / Cards */}
+    <div className="px-4 pt-3 flex flex-col gap-2">
+      {ordenados.length===0
+        ?<div className="text-center py-12 text-gray-400"><div className="text-3xl mb-2">📭</div><p className="text-sm">Sin resultados</p></div>
+        :ordenados.map(r=>{
+          const isExp=exp===r.id;const alerta=cAl(r.alertas)>0;
+          const tNC=r.t_despacho!==""&&parseFloat(r.t_despacho)>-17;
+          return<div key={r.id} className={cn("rounded-xl border p-3",alerta?"border-red-200 bg-red-50":"border-gray-200 bg-white")}>
+            <div className="flex items-start justify-between gap-2" onClick={()=>setExp(isExp?null:r.id)}>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-sm font-semibold text-gray-800 truncate">{r.producto||"—"}</span>
+                  {alerta&&<ABadge n={cAl(r.alertas)}/>}
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5">📍 {r.local_destino||"—"}</p>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <span className="text-[10px] text-gray-400">{fd(r.fecha)} {r.hora}</span>
+                  <span className="text-[10px] text-gray-400">· 🚛 {r.chofer||"—"} · {r.patente||"—"}</span>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                <span className={cn("text-xs font-bold",tNC?"text-red-600":"text-blue-600")}>{r.t_despacho?`${r.t_despacho}°C`:"—"}</span>
+                <span className="text-[10px] text-gray-400">{isExp?"▲":"▼"}</span>
+              </div>
+            </div>
+            {/* Detalle expandible */}
+            {isExp&&<div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-2">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                <div><span className="text-gray-400">Lote</span><p className="font-medium text-gray-700">{r.lote||"—"}</p></div>
+                <div><span className="text-gray-400">Cantidad</span><p className="font-medium text-gray-700">{r.cantidad||"—"} und.</p></div>
+                <div><span className="text-gray-400">T° despacho</span><p className={cn("font-semibold",tNC?"text-red-600":"text-gray-700")}>{r.t_despacho?`${r.t_despacho}°C`:"—"} {tNC&&"⚠"}</p></div>
+                <div><span className="text-gray-400">T° transporte</span><p className="font-medium text-gray-700">{r.t_transporte?`${r.t_transporte}°C`:"—"}</p></div>
+                <div><span className="text-gray-400">Etiquetado</span><p className={cn("font-medium",r.etiquetado_ok?"text-green-600":"text-red-500")}>{r.etiquetado_ok?"✓ Correcto":"✕ Incorrecto"}</p></div>
+                <div><span className="text-gray-400">Embalaje</span><p className={cn("font-medium",r.estado_embalaje==="integro"?"text-green-600":"text-amber-600")}>{r.estado_embalaje==="integro"?"✓ Íntegro":"⚠ Con daño"}</p></div>
+                <div><span className="text-gray-400">Chofer</span><p className="font-medium text-gray-700">{r.chofer||"—"}</p></div>
+                <div><span className="text-gray-400">Patente</span><p className="font-medium text-gray-700">{r.patente||"—"}</p></div>
+                <div><span className="text-gray-400">Turno</span><p className="font-medium text-gray-700">{r.turno} · {r.responsable}</p></div>
+              </div>
+              {r.observaciones&&<div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 text-xs text-yellow-800"><span className="font-medium">Obs:</span> {r.observaciones}</div>}
+              {r.fotos&&r.fotos.length>0&&<div className="flex gap-2 flex-wrap">{r.fotos.map(f=>{const u=loadFoto(f.id);return u?<img key={f.id} src={u} alt={f.nombre} className="w-16 h-16 rounded-lg object-cover border border-gray-200"/>:<div key={f.id} className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center text-[9px] text-gray-400">📷</div>;})}</div>}
+            </div>}
+          </div>;
+        })}
+      <p className="text-center text-xs text-gray-400 py-2">{ordenados.length} de {desps.length} registros</p>
+    </div>
+  </div>;
+}
+
 // ── VISTA SEMANA ──────────────────────────────────────────────
 function VSem({u,mes,sem,onBack}:{u:Usuario;mes:MesI;sem:SemI;onBack:()=>void}){
-  const[dia,sDia]=useState<DiaI|null>(null);const[vista,sV]=useState<"dias"|"resumen"|"dashboard">("dias");const[allRegs,sAll]=useState<Reg[]>([]);const[cg,sCg]=useState(false);const[notas,sNotas]=useState<Record<string,string>>({});const[elim,sElim]=useState<Set<string>>(new Set());
+  const[dia,sDia]=useState<DiaI|null>(null);
+  const[vista,sV]=useState<"dias"|"resumen"|"dashboard"|"bd_recep"|"bd_desp">("dias");
+  const[allRegs,sAll]=useState<Reg[]>([]);const[cg,sCg]=useState(false);const[notas,sNotas]=useState<Record<string,string>>({});const[elim,sElim]=useState<Set<string>>(new Set());
   const HOY=hoy();
   useEffect(()=>{(async()=>{sCg(true);const rs:Reg[]=[];for(const d of sem.dias){if(!d.fecha||d.fecha>HOY)continue;const dr=await loadDia(mes.id,sem.semana,d.fecha);rs.push(...dr);}sAll(rs);sCg(false);})();},[]);
   if(dia)return<VDia u={u} mes={mes} sem={sem} dia={dia} onBack={()=>sDia(null)}/>;
+  if(vista==="bd_recep")return<BDRecepcion registros={allRegs} onBack={()=>sV("dias")}/>;
+  if(vista==="bd_desp")return<BDDespachos registros={allRegs} onBack={()=>sV("dias")}/>;
   const titulo=`${mes.label} · Semana ${sem.semana}`;
+  const nRecep=allRegs.filter(r=>r.tipo==="recepcion").length;
+  const nDesp=allRegs.filter(r=>r.tipo==="despacho").length;
   return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-20">
     <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
       <div className="flex items-center gap-3"><button onClick={onBack} className="text-gray-400 p-1">←</button><div><p className="text-xs text-gray-400">{mes.label}</p><p className="text-base font-bold text-gray-800">Semana {sem.semana}</p></div>{cg&&<Spin/>}</div>
-      <div className="flex gap-1 mt-2 bg-gray-100 rounded-xl p-1">{([{k:"dias",l:"Días"},{k:"resumen",l:"Resumen"},{k:"dashboard",l:"Dashboard"}] as const).map(x=><button key={x.k} onClick={()=>sV(x.k)} className={cn("flex-1 text-xs font-medium py-1.5 rounded-lg",vista===x.k?"bg-white text-gray-800 shadow-sm":"text-gray-500")}>{x.l}</button>)}</div>
+      <div className="flex gap-1 mt-2 bg-gray-100 rounded-xl p-1 overflow-x-auto">
+        {([{k:"dias",l:"📅 Días"},{k:"resumen",l:"📊 Resumen"},{k:"dashboard",l:"📈 Dashboard"}] as const).map(x=><button key={x.k} onClick={()=>sV(x.k)} className={cn("flex-1 text-[10px] font-medium py-1.5 rounded-lg whitespace-nowrap",vista===x.k?"bg-white text-gray-800 shadow-sm":"text-gray-500")}>{x.l}</button>)}
+      </div>
+      {/* Accesos directos BD */}
+      <div className="flex gap-2 mt-2">
+        <button onClick={()=>sV("bd_recep")} className={cn("flex-1 h-9 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5",nRecep>0?"border-green-300 bg-green-50 text-green-700 hover:bg-green-100":"border-gray-200 bg-white text-gray-500 hover:border-green-300")}>
+          🚚 MP Recibida <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",nRecep>0?"bg-green-200 text-green-700":"bg-gray-100 text-gray-400")}>{nRecep}</span>
+        </button>
+        <button onClick={()=>sV("bd_desp")} className={cn("flex-1 h-9 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5",nDesp>0?"border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100":"border-gray-200 bg-white text-gray-500 hover:border-blue-300")}>
+          📦 Despachos <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",nDesp>0?"bg-blue-200 text-blue-700":"bg-gray-100 text-gray-400")}>{nDesp}</span>
+        </button>
+      </div>
     </div>
     {vista==="dias"&&<div className="p-4"><div className="grid grid-cols-7 gap-1 mb-2">{DN.map(d=><div key={d} className="text-center text-[10px] font-semibold text-gray-400 py-1">{d}</div>)}</div><div className="grid grid-cols-7 gap-1">{sem.dias.map((d,i)=>{if(d.dayOfMonth===-1)return<div key={i}/>;const eH=d.fecha===HOY;const eF=d.fecha>HOY;return<button key={i} onClick={()=>!eF&&sDia(d)} disabled={eF} className={cn("aspect-square rounded-xl flex flex-col items-center justify-center text-sm font-semibold border",eH?"bg-blue-500 text-white border-blue-500 shadow-sm":eF?"bg-gray-50 text-gray-300 border-gray-100 cursor-default":"bg-white text-gray-700 border-gray-200 hover:border-blue-400 active:scale-95")}>{d.dayOfMonth}{eH&&<span className="text-[8px] opacity-80">hoy</span>}</button>;})}</div><p className="text-xs text-gray-400 text-center mt-4">Tocá un día para ver o cargar registros</p></div>}
     {vista==="resumen"&&<div className="px-4 pt-4"><ResumenPanel registros={allRegs} titulo={titulo} isCalidad={u.rol==="calidad"} notas={notas} onNota={(id,v)=>sNotas(p=>({...p,[id]:v}))} eliminados={elim} onElim={id=>sElim(p=>new Set([...p,id]))} onRestore={id=>sElim(p=>{const n=new Set(p);n.delete(id);return n;})}/></div>}
@@ -809,14 +1086,28 @@ function VSem({u,mes,sem,onBack}:{u:Usuario;mes:MesI;sem:SemI;onBack:()=>void}){
 
 // ── VISTA MES ─────────────────────────────────────────────────
 function VMes({u,mes,onBack}:{u:Usuario;mes:MesI;onBack:()=>void}){
-  const[sem,sSem]=useState<SemI|null>(null);const[vista,sV]=useState<"semanas"|"resumen"|"dashboard">("semanas");const[allRegs,sAll]=useState<Reg[]>([]);const[cg,sCg]=useState(false);const[notas,sNotas]=useState<Record<string,string>>({});const[elim,sElim]=useState<Set<string>>(new Set());
+  const[sem,sSem]=useState<SemI|null>(null);
+  const[vista,sV]=useState<"semanas"|"resumen"|"dashboard"|"bd_recep"|"bd_desp">("semanas");
+  const[allRegs,sAll]=useState<Reg[]>([]);const[cg,sCg]=useState(false);const[notas,sNotas]=useState<Record<string,string>>({});const[elim,sElim]=useState<Set<string>>(new Set());
   const HOY=hoy();
   useEffect(()=>{(async()=>{sCg(true);const rs:Reg[]=[];for(const s of mes.semanas)for(const d of s.dias){if(!d.fecha||d.fecha>HOY)continue;const dr=await loadDia(mes.id,s.semana,d.fecha);rs.push(...dr);}sAll(rs);sCg(false);})();},[]);
   if(sem)return<VSem u={u} mes={mes} sem={sem} onBack={()=>sSem(null)}/>;
+  if(vista==="bd_recep")return<BDRecepcion registros={allRegs} onBack={()=>sV("semanas")}/>;
+  if(vista==="bd_desp")return<BDDespachos registros={allRegs} onBack={()=>sV("semanas")}/>;
+  const nRecep=allRegs.filter(r=>r.tipo==="recepcion").length;
+  const nDesp=allRegs.filter(r=>r.tipo==="despacho").length;
   return<div className="min-h-screen bg-gray-50 max-w-lg mx-auto pb-20">
     <div className="bg-white border-b border-gray-100 px-4 pt-4 pb-3 sticky top-0 z-10">
       <div className="flex items-center gap-3"><button onClick={onBack} className="text-gray-400 p-1">←</button><p className="text-base font-bold text-gray-800 flex-1">{mes.label}</p>{cg&&<Spin/>}</div>
-      <div className="flex gap-1 mt-2 bg-gray-100 rounded-xl p-1">{([{k:"semanas",l:"Semanas"},{k:"resumen",l:"Resumen mes"},{k:"dashboard",l:"Dashboard"}] as const).map(x=><button key={x.k} onClick={()=>sV(x.k)} className={cn("flex-1 text-xs font-medium py-1.5 rounded-lg",vista===x.k?"bg-white text-gray-800 shadow-sm":"text-gray-500")}>{x.l}</button>)}</div>
+      <div className="flex gap-1 mt-2 bg-gray-100 rounded-xl p-1">{([{k:"semanas",l:"Semanas"},{k:"resumen",l:"Resumen"},{k:"dashboard",l:"Dashboard"}] as const).map(x=><button key={x.k} onClick={()=>sV(x.k)} className={cn("flex-1 text-xs font-medium py-1.5 rounded-lg",vista===x.k?"bg-white text-gray-800 shadow-sm":"text-gray-500")}>{x.l}</button>)}</div>
+      <div className="flex gap-2 mt-2">
+        <button onClick={()=>sV("bd_recep")} className={cn("flex-1 h-9 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5",nRecep>0?"border-green-300 bg-green-50 text-green-700":"border-gray-200 bg-white text-gray-500")}>
+          🚚 MP del mes <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",nRecep>0?"bg-green-200 text-green-700":"bg-gray-100 text-gray-400")}>{nRecep}</span>
+        </button>
+        <button onClick={()=>sV("bd_desp")} className={cn("flex-1 h-9 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5",nDesp>0?"border-blue-300 bg-blue-50 text-blue-700":"border-gray-200 bg-white text-gray-500")}>
+          📦 Despachos <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",nDesp>0?"bg-blue-200 text-blue-700":"bg-gray-100 text-gray-400")}>{nDesp}</span>
+        </button>
+      </div>
     </div>
     {vista==="semanas"&&<div className="p-4">
       <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-4"><div className="grid grid-cols-7 gap-1 mb-2">{DN.map(d=><div key={d} className="text-center text-[10px] font-semibold text-gray-400">{d}</div>)}</div>{mes.semanas.map(s=><div key={s.semana} className="grid grid-cols-7 gap-1 mb-1">{s.dias.map((d,i)=>{if(d.dayOfMonth===-1)return<div key={i}/>;const eH=d.fecha===HOY;const eF=d.fecha>HOY;return<div key={i} onClick={()=>!eF&&sSem(s)} className={cn("aspect-square rounded-lg flex items-center justify-center text-xs cursor-pointer",eH?"bg-blue-500 text-white font-bold":eF?"text-gray-300":"text-gray-700 hover:bg-blue-50 font-medium")}>{d.dayOfMonth}</div>;})}</div>)}</div>
