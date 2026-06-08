@@ -367,7 +367,7 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
 
   async function sv(){sG(true);onSave({id:gid("ml"),tipo:"medialunas",turno:u.turno,responsable:u.nombre,fecha:hoy(),hora:ahora(),timestamp:new Date().toISOString(),
     prom_inicio:pi,prom_medio:pm,prom_fin:pf,prom_total:pt,desvio_pct:dv,
-    alertas:{peso_nc:aPeso,fermentador_nc:aFerment,humedad_nc:aHumedad,tiempo_ferm_nc:aTiempoFerm,t_abatidor_nc:aAbat,t_salida_nc:aSalida,t_camara_nc:aCamara,recupero_exc:aRecupero,t_envasado_nc:aEnvasado}},...d} as unknown as Reg);sG(false);}
+    alertas:{peso_nc:aPeso,fermentador_nc:aFerment,humedad_nc:aHumedad,tiempo_ferm_nc:aTiempoFerm,t_abatidor_nc:aAbat,t_salida_nc:aSalida,t_camara_nc:aCamara,recupero_exc:aRecupero,t_envasado_nc:aEnvasado},...d} as unknown as Reg);sG(false);}
 
   return<FW titulo="🥐 Medialunas" sub="P276/P280 · Proceso completo + Pesos" onCancel={onCancel} onSave={sv} g={g} ch={<>
     <div className="flex gap-2">{(["manteca","grasa"] as const).map(x=><button key={x} onClick={()=>sD(p=>({...p,variedad:x}))} className={cn("flex-1 py-2.5 rounded-xl text-sm font-semibold border-2",d.variedad===x?"border-amber-500 bg-amber-50 text-amber-700":"border-gray-200 bg-white text-gray-600")}>{x==="manteca"?"🥐 Manteca (P280)":"🥐 Grasa (P276)"}</button>)}</div>
