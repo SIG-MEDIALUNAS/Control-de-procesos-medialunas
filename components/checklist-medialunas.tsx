@@ -1,3 +1,4 @@
+
 "use client";
 // ═══════════════════════════════════════════════════════════════
 // CONTROL VOLANTE — SABORES EXPRESS · v8.0
@@ -373,27 +374,31 @@ function FTemp({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCancel:()=>
 function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCancel:()=>void}){
   const[d,sD]=useState({
     variedad:""as"manteca"|"grasa"|"",lote_harina:"",
-    maquinista_12mil:"",maquinista_lam_auto:"",
-    // 1 — Amasado
-    agua_chiller_kg:"",hielo_kg:"",t_agua_chiller:"",tiempo_amasado:"",t_masa_salida:"",
-    // 2 — Ingreso cámara (trazabilidad)
+    maquinista_12mil:"",maquinista_lam_auto:"",maquinista_manual:"",
+    // S0 — Fraccionado/Dosificado
+    agua_chiller_kg:"",hielo_kg:"",t_agua_chiller:"",
+    // S1 — Amasado
+    tiempo_amasado:"",t_masa_salida:"",peso_baston:"",
+    // Trazabilidad ingreso cámara
     num_carro:"",fecha_ingreso_camara:hoy(),hora_ingreso_camara:"",
-    // 3 — Laminado manual / salida cámara (trazabilidad)
+    pct_recupero:"",
+    // S2 — Laminado manual
     num_carro_laminado:"",fecha_salida_camara:hoy(),hora_salida_camara:"",hojaldre_ok:false,
-    // 4 — Laminado automático
+    calibre_inicio_manual:"",calibre_fin_manual:"",vueltas_manual:"",
+    // S3 — Laminado automático
     calibre_inicio:"",calibre_fin:"",ancho_cm:"",
-    // 5 — Medialunera + Pesos
+    // S4 — Medialunera + Pesos
     calibre_medialunera:"",
     muestras_inicio:["","","","",""],muestras_medio:["","","","",""],muestras_fin:["","","","",""],
-    ajustado:"",pct_recupero:"",
-    // 6 — Fermentador (único registro de T° fermentador)
+    ajustado:"",
+    // S5 — Fermentador
     t_fermentador:"",humedad_fermentador:"",tiempo_fermentado:"",
     num_carro_fermentador:"",hora_ingreso_fermentador:"",hora_salida_fermentador:"",
-    // 7 — Abatidor (único registro T° abatidor y salida)
+    // S6 — Abatidor
     t_abatidor:"",t_salida_abatidor:"",tiempo_abatido:"",num_carro_abatidor:"",
-    // 8 — Envasado
-    bandejas_unidades_ok:false,etiqueta_vigente:false,t_medialunas_envasar:"",obs_envasado:"",
-    // 9 — Sensorial
+    // S7 — Envasado
+    bandejas_unidades_ok:false,etiqueta_vigente:false,t_medialunas_envasar:"",t_camara_final:"",obs_envasado:"",
+    // S8 — Sensorial
     color_ok:false,forma_ok:false,textura_ok:false,sensorial_obs:"",
     observaciones:"",fotos:[] as FotoMeta[]});
   const[g,sG]=useState(false);
@@ -447,9 +452,300 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
 
   return<FW titulo="🥐 Medialunas" sub="P280 Manteca / P276 Grasa — Proceso completo" onCancel={onCancel} onSave={sv} g={g} ch={<>
 
-    {/* Variedad + Lote */}
-    <div className="flex gap-2">{(["manteca","grasa"] as const).map(x=><button key={x} onClick={()=>sD(p=>({...p,variedad:x}))} className={cn("flex-1 py-2.5 rounded-xl text-sm font-semibold border-2",d.variedad===x?"border-amber-500 bg-amber-50 text-amber-700":"border-gray-200 bg-white text-gray-600")}>{x==="manteca"?"🥐 Manteca (P280)":"🥐 Grasa (P276)"}</button>)}</div>
-    <Txt label="Lote / N° amasijo" value={d.lote_harina} onChange={v=>sD(p=>({...p,lote_harina:v}))} ph="Trazabilidad — obligatorio"/>
+    {/* ── CABECERA: Variedad + Lote ──────────────────────────── */}
+    <div className="flex gap-2">
+      {(["manteca","grasa"] as const).map(x=><button key={x} onClick={()=>sD(p=>({...p,variedad:x}))} className={cn("flex-1 py-3 rounded-xl text-sm font-bold border-2",d.variedad===x?"border-amber-500 bg-amber-50 text-amber-700":"border-gray-200 bg-white text-gray-500")}>{x==="manteca"?"🥐 Manteca (P280)":"🥐 Grasa (P276)"}</button>)}
+    </div>
+    <Txt label="Lote / N° amasijo" value={d.lote_harina} onChange={v=>sD(p=>({...p,lote_harina:v}))} ph="Obligatorio — trazabilidad"/>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 0 — FRACCIONADO / DOSIFICADO  (P280 §2)
+        Ingredientes fraccionados antes del amasado.
+        PCC: T° del sitio de fraccionado (cámara de masas) — se registra en Temperaturas.
+        Aquí se carga Agua + Hielo como datos únicos del lote.
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-gray-200 overflow-hidden">
+      <div className="bg-gray-100 px-4 py-2 flex items-center justify-between">
+        <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">📦 S0 — Fraccionado / Dosificado</span>
+        <span className="text-[10px] text-gray-400">P280 §2</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3 bg-white">
+        <div className="text-[10px] text-gray-400 leading-relaxed">Ingredientes fraccionados en cámara de masas, rotulados con fecha. T° del sitio se registra en <b>🌡️ Temperaturas</b>.</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Num label="Cantidad Agua (Kg)" spec="PC — dato único del lote" value={d.agua_chiller_kg} onChange={v=>sD(p=>({...p,agua_chiller_kg:v}))}/>
+          <Num label="Cantidad Hielo (Kg)" spec="PC — dato único del lote" value={d.hielo_kg} onChange={v=>sD(p=>({...p,hielo_kg:v}))}/>
+        </div>
+        <Num label="T° chiller (°C)" spec="PCC — Parámetro: 5°C a 13°C (P280) / 1°C a 6°C (seteo)" value={d.t_agua_chiller} onChange={v=>sD(p=>({...p,t_agua_chiller:v}))} al={aAgua}/>
+        {aAgua&&<div className="bg-red-50 border border-red-200 rounded-xl p-2.5 text-xs text-red-700 font-medium">🔴 PCC — T° agua chiller fuera de rango. Ajustar proporción agua/hielo antes de amasar.</div>}
+      </div>
+    </div>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 1 — AMASADO  (P280 §3)
+        PCC: T° agua chiller · Tiempo amasado · T° masa salida
+        Trazabilidad: N° carro asignado + Fecha + Hora de ingreso a cámara
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-indigo-200 overflow-hidden">
+      <div className="bg-indigo-50 px-4 py-2 flex items-center justify-between">
+        <span className="text-xs font-bold text-indigo-700 uppercase tracking-wide">🫱 S1 — Amasado</span>
+        <span className="text-[10px] text-indigo-400">P280 §3 · PCC</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3 bg-white">
+
+        {/* PCC Amasado */}
+        <div className="bg-indigo-50 rounded-xl p-3 flex flex-col gap-3">
+          <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wide">🔴 Puntos de Control Crítico</div>
+          <Num label="Tiempo total de amasado (min)" spec="PCC — 25 min ±3 min  →  22 a 28 min" value={d.tiempo_amasado} onChange={v=>sD(p=>({...p,tiempo_amasado:v}))} al={aTiempoAm}/>
+          {aTiempoAm&&<div className="bg-red-50 border border-red-300 rounded-xl p-2 text-xs text-red-700 font-medium">⚠ Tiempo fuera de rango — verificar análisis organoléptico (tenacidad/elasticidad)</div>}
+          <Num label="T° masa al salir amasadora (°C)" spec="PCC — 20°C ±2°C  →  18°C a 22°C" value={d.t_masa_salida} onChange={v=>sD(p=>({...p,t_masa_salida:v}))} al={aTMasa}/>
+          {aTMasa&&<div className="bg-red-50 border border-red-300 rounded-xl p-2 text-xs text-red-700 font-medium">⚠ T° masa NC — Retirar, cortar y dejar descansar en cámara con seguimiento hasta bajar a rango.</div>}
+        </div>
+
+        {/* PC Amasado */}
+        <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Peso de bastones (PC)</div>
+        <Num label="Peso de bastón (Kg)" spec="PC — valor unitario · objetivo 8 Kg" value={d.peso_baston} onChange={v=>sD(p=>({...p,peso_baston:v}))} al={d.peso_baston!==""&&(parseFloat(d.peso_baston)<7.5||parseFloat(d.peso_baston)>8.5)}/>
+
+        {/* Trazabilidad carro — Ingreso a cámara */}
+        <div className="bg-cyan-50 border border-cyan-200 rounded-xl p-3 flex flex-col gap-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-cyan-700 uppercase tracking-wide">🚛 Trazabilidad — Ingreso a cámara</span>
+            <span className="text-[9px] text-cyan-500">cv_carros/ (path fijo)</span>
+          </div>
+          <div className="text-[9px] text-cyan-500">Reposo mínimo 8h · Óptimo 12h según P280 §3.8</div>
+          <Txt label="N° de carro asignado" value={d.num_carro} onChange={v=>sD(p=>({...p,num_carro:v}))} ph="ej: C-01 · único por lote"/>
+          <div className="grid grid-cols-2 gap-2">
+            <Txt label="Fecha ingreso" value={d.fecha_ingreso_camara} onChange={v=>sD(p=>({...p,fecha_ingreso_camara:v}))} ph={hoy()}/>
+            <Txt label="Hora ingreso" value={d.hora_ingreso_camara} onChange={v=>sD(p=>({...p,hora_ingreso_camara:v}))} ph="HH:MM"/>
+          </div>
+          {d.num_carro&&d.hora_ingreso_camara&&<div className="bg-cyan-100 rounded-lg px-3 py-1.5 text-xs text-cyan-800 font-medium">Carro {d.num_carro} · Ingresó {fd(d.fecha_ingreso_camara)} a las {d.hora_ingreso_camara}h</div>}
+        </div>
+
+        <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Rendimiento (PC)</div>
+        <Num label="% Rendimiento / Recupero" spec="PC — Límite: ≤10% de harina del amasijo" value={d.pct_recupero} onChange={v=>sD(p=>({...p,pct_recupero:v}))} al={aRecupero}/>
+        {aRecupero&&<div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-xs text-amber-700">⚠ Recupero excede límite — revisar proceso de recorte y absorción.</div>}
+      </div>
+    </div>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 2 — LAMINADO MANUAL  (P280 §4)
+        Maquinista Manual.
+        N° carro debe coincidir con el dato de ingreso.
+        Trazabilidad: Fecha + Hora de salida de cámara → calcula reposo.
+        PCC: Corte de hojaldre visible.
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-violet-200 overflow-hidden">
+      <div className="bg-violet-50 px-4 py-2 flex items-center justify-between">
+        <span className="text-xs font-bold text-violet-700 uppercase tracking-wide">📋 S2 — Laminado Manual</span>
+        <span className="text-[10px] text-violet-400">P280 §4 · PCC</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3 bg-white">
+
+        <Txt label="Maquinista Manual" value={d.maquinista_manual} onChange={v=>sD(p=>({...p,maquinista_manual:v}))} ph="Nombre y apellido del operario"/>
+
+        {/* Trazabilidad carro — Salida de cámara */}
+        <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 flex flex-col gap-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-violet-700 uppercase tracking-wide">🚛 Trazabilidad — Salida de cámara</span>
+            <span className="text-[9px] text-violet-400">cv_carros/ (path fijo)</span>
+          </div>
+          <Txt label="N° de carro (debe coincidir con S1)" value={d.num_carro_laminado} onChange={v=>sD(p=>({...p,num_carro_laminado:v}))} ph="Mismo N° del ingreso"/>
+          {d.num_carro&&d.num_carro_laminado&&d.num_carro!==d.num_carro_laminado&&<div className="bg-amber-50 border border-amber-300 rounded-lg p-2 text-xs text-amber-700 font-semibold">⚠ N° de carro no coincide con el ingreso ({d.num_carro})</div>}
+          <div className="grid grid-cols-2 gap-2">
+            <Txt label="Fecha salida cámara" value={d.fecha_salida_camara} onChange={v=>sD(p=>({...p,fecha_salida_camara:v}))} ph={hoy()}/>
+            <Txt label="Hora salida cámara" value={d.hora_salida_camara} onChange={v=>sD(p=>({...p,hora_salida_camara:v}))} ph="HH:MM"/>
+          </div>
+          {/* Cálculo automático de reposo */}
+          {horasReposo>0&&<div className={cn("rounded-xl px-3 py-2 text-sm font-bold text-center border-2",horasReposo>=12?"border-blue-300 bg-blue-50 text-blue-700":horasReposo>=8?"border-green-300 bg-green-50 text-green-700":"border-red-400 bg-red-50 text-red-700")}>
+            ⏱ Reposo en cámara: <span className="text-lg">{horasReposo}h</span>
+            {horasReposo<8?" 🔴 MÍNIMO 8h — Desvío de proceso":horasReposo>=12?" ✓ Óptimo (12h)":"  ✓ Mínimo cumplido (8h)"}
+          </div>}
+          {aReposoMin&&<div className="bg-red-50 border border-red-300 rounded-xl p-2 text-xs text-red-700 font-medium">⚠ Reposo insuficiente — Caso de NO completarse: señalar hora de ingreso. Generar desvío.</div>}
+        </div>
+
+        {/* PCC Hojaldre */}
+        <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 flex flex-col gap-2">
+          <div className="text-[10px] font-bold text-red-700 uppercase tracking-wide">🔴 PCC — Corte de hojaldre</div>
+          <div className="text-[10px] text-red-500">Verificar hojaldre visible en el corte. Si no cumple: NO continuar proceso.</div>
+          <button onClick={()=>sD(p=>({...p,hojaldre_ok:!p.hojaldre_ok}))} className={cn("h-13 py-3 rounded-xl border-2 text-sm font-bold",d.hojaldre_ok?"border-green-400 bg-green-50 text-green-700":"border-red-400 bg-red-100 text-red-700")}>
+            {d.hojaldre_ok?"✓ CUMPLE — Hojaldre visible en corte":"✕ NO CUMPLE — Hojaldre no visible"}
+          </button>
+          {aHojaldre&&<div className="bg-red-100 border border-red-400 rounded-xl p-2 text-xs text-red-800 font-bold">🛑 PCC CRÍTICO — Detener proceso. Generar NC inmediatamente.</div>}
+        </div>
+
+        {/* PC Laminado manual */}
+        <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Calibres laminado manual (P280 §4.1)</div>
+        <div className="bg-gray-50 rounded-xl p-3">
+          <div className="text-[9px] text-gray-400 mb-2">Manteca: 39-29-19-12 (Argental) · Vueltas simples: 39-32-26-17-12</div>
+          <div className="grid grid-cols-3 gap-2">
+            <Num label="Calibre inicio" spec="PC" value={d.calibre_inicio_manual||""} onChange={v=>sD(p=>({...p,calibre_inicio_manual:v}))}/>
+            <Num label="Calibre fin" spec="PC" value={d.calibre_fin_manual||""} onChange={v=>sD(p=>({...p,calibre_fin_manual:v}))}/>
+            <Num label="N° vueltas" spec="PC" value={d.vueltas_manual||""} onChange={v=>sD(p=>({...p,vueltas_manual:v}))}/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 3 — LAMINADO AUTOMÁTICO  (P280 §5)
+        Maquinista Laminadora Automática.
+        PC: Calibre inicio · Calibre fin · Ancho (cm)
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-orange-200 overflow-hidden">
+      <div className="bg-orange-50 px-4 py-2 flex items-center justify-between">
+        <span className="text-xs font-bold text-orange-700 uppercase tracking-wide">⚙️ S3 — Laminado Automático</span>
+        <span className="text-[10px] text-orange-400">P280 §5 · PC</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3 bg-white">
+        <Txt label="Maquinista Laminadora Automática" value={d.maquinista_lam_auto} onChange={v=>sD(p=>({...p,maquinista_lam_auto:v}))} ph="Nombre y apellido del operario"/>
+        <div className="text-[9px] text-gray-400">Programa: "manteca" · Rodillo lado derecho para enrollado automático</div>
+        <div className="grid grid-cols-3 gap-2">
+          <Num label="Calibre inicio" spec="PC" value={d.calibre_inicio} onChange={v=>sD(p=>({...p,calibre_inicio:v}))}/>
+          <Num label="Calibre fin" spec="PC" value={d.calibre_fin} onChange={v=>sD(p=>({...p,calibre_fin:v}))}/>
+          <Num label="Ancho (cm)" spec="PC" value={d.ancho_cm} onChange={v=>sD(p=>({...p,ancho_cm:v}))}/>
+        </div>
+      </div>
+    </div>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 4 — MEDIALUNERA + PESOS  (P280 §6)
+        Maquinista 12 Mil.
+        PCC: Peso triángulo (valor unitario = 8 Kg de bastón)
+             Cantidad de bastones.
+        PC: Calibre medialunera · % recupero.
+        15 muestras: 5 inicio · 5 medio · 5 fin
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-amber-200 overflow-hidden">
+      <div className="bg-amber-50 px-4 py-2 flex items-center justify-between">
+        <span className="text-xs font-bold text-amber-700 uppercase tracking-wide">🥐 S4 — Medialunera</span>
+        <span className="text-[10px] text-amber-400">P280 §6 · PCC + PC</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3 bg-white">
+        <Txt label="Maquinista 12 Mil" value={d.maquinista_12mil} onChange={v=>sD(p=>({...p,maquinista_12mil:v}))} ph="Nombre y apellido del operario"/>
+        <Num label="Calibre medialunera" spec="PC — 60 (ML12) o 15/20 (ML 1-3)" value={d.calibre_medialunera} onChange={v=>sD(p=>({...p,calibre_medialunera:v}))}/>
+        <div className="text-[9px] text-gray-400">Cantidad de bastones (valor unitario = 8 Kg c/u) · Registrar recortes por medialunera (P280 §6.2)</div>
+
+        {/* PCC Pesos — 15 muestras */}
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3">
+          <div className="text-[10px] font-bold text-amber-700 uppercase tracking-wide mb-2">🔴 PCC — Peso de triángulos · Objetivo: {pesoObj}g ±5g</div>
+          <div className="text-[9px] text-amber-600 mb-3">15 muestras total: 5 al inicio · 5 al medio · 5 al final · Valor unitario por bastón</div>
+          {(["muestras_inicio","muestras_medio","muestras_fin"] as const).map((grupo,gi)=>{
+            const etiqLabel=["Inicio (primeros 5)","Medio (siguientes 5)","Fin (últimos 5)"];
+            const prom=[pi,pm,pf][gi];const enRango=prom>0&&Math.abs(prom-pesoObj)<=5;
+            return<div key={grupo} className="mb-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-gray-700">{etiqLabel[gi]}</span>
+                {prom>0&&<span className={cn("text-xs font-bold px-2 py-0.5 rounded-full",enRango?"bg-green-100 text-green-700":"bg-red-100 text-red-700")}>X̄ {prom}g {enRango?"✓":"⚠"}</span>}
+              </div>
+              <div className="grid grid-cols-5 gap-1">
+                {d[grupo].map((v,i)=><input key={i} type="number" inputMode="decimal" value={v} onChange={e=>setMuestra(grupo,i,e.target.value)} placeholder={`${i+1}`} className={cn("h-10 rounded-lg border text-center text-xs font-mono",v!==""&&Math.abs(parseFloat(v)-pesoObj)>5?"border-red-400 bg-red-50 text-red-700":"border-gray-200 bg-white")}/>)}
+              </div>
+            </div>;})}
+          {pt>0&&<div className={cn("rounded-xl p-3 flex items-center justify-between border-2 mt-2",aPeso?"border-red-400 bg-red-50":"border-green-400 bg-green-50")}>
+            <div><div className={cn("text-sm font-bold",aPeso?"text-red-700":"text-green-700")}>{aPeso?"🔴 PCC — Fuera de rango":"✓ En rango"}</div><div className="text-[10px] text-gray-500">Promedio total: {pt}g · Objetivo: {pesoObj}g ±5g</div></div>
+            <div className={cn("text-2xl font-black",aPeso?"text-red-600":"text-green-600")}>{dv}%</div>
+          </div>}
+          {aPeso&&<Sel label="Acción correctiva" value={d.ajustado} onChange={v=>sD(p=>({...p,ajustado:v}))} al={!d.ajustado} opts={[{v:"si",l:"✓ Calibre corregido"},{v:"no",l:"Sin corrección — documentar"},{v:"retirado",l:"Lote retirado de línea"}]}/>}
+        </div>
+      </div>
+    </div>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 5 — FERMENTADOR  (P280 §8)
+        Trazabilidad: N° carro + hora ingreso + hora salida
+        PCC: T° · Humedad · Tiempo
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-green-200 overflow-hidden">
+      <div className="bg-green-50 px-4 py-2 flex items-center justify-between">
+        <span className="text-xs font-bold text-green-700 uppercase tracking-wide">🌡️ S5 — Fermentador</span>
+        <span className="text-[10px] text-green-400">P280 §8 · PCC</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3 bg-white">
+        <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex flex-col gap-2.5">
+          <div className="text-[10px] font-bold text-green-700 uppercase tracking-wide">🚛 Trazabilidad — Fermentador</div>
+          <div className="text-[9px] text-green-500">N° carro · Ingreso por puerta más próxima al montacargas · Salida por puerta más próxima a abatidores</div>
+          <Txt label="N° de carro fermentador" value={d.num_carro_fermentador} onChange={v=>sD(p=>({...p,num_carro_fermentador:v}))} ph="Dato de trazabilidad — path fijo"/>
+          <div className="grid grid-cols-2 gap-2">
+            <Txt label="Hora ingreso" value={d.hora_ingreso_fermentador} onChange={v=>sD(p=>({...p,hora_ingreso_fermentador:v}))} ph="HH:MM"/>
+            <Txt label="Hora salida" value={d.hora_salida_fermentador} onChange={v=>sD(p=>({...p,hora_salida_fermentador:v}))} ph="HH:MM"/>
+          </div>
+          {d.hora_ingreso_fermentador&&d.hora_salida_fermentador&&<div className="bg-green-100 rounded-lg px-3 py-1.5 text-xs text-green-800 font-medium">Carro {d.num_carro_fermentador||"—"} · {d.hora_ingreso_fermentador}h → {d.hora_salida_fermentador}h</div>}
+        </div>
+        <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex flex-col gap-2.5">
+          <div className="text-[10px] font-bold text-green-700 uppercase tracking-wide">🔴 PCC — Parámetros fermentador</div>
+          <div className="text-[9px] text-green-500">Seteo: 33°C · 90% humedad · 60 min (puede variar según condición ambiental)</div>
+          <Num label="T° fermentador (°C)" spec="PCC — 28°C ±3°C  →  25°C a 31°C" value={d.t_fermentador} onChange={v=>sD(p=>({...p,t_fermentador:v}))} al={aFerment}/>
+          <div className="grid grid-cols-2 gap-2">
+            <Num label="Humedad (%)" spec="PCC — 90%" value={d.humedad_fermentador} onChange={v=>sD(p=>({...p,humedad_fermentador:v}))} al={aHumedad}/>
+            <Num label="Tiempo (min)" spec="PCC — 60 min" value={d.tiempo_fermentado} onChange={v=>sD(p=>({...p,tiempo_fermentado:v}))} al={aTiempoFerm}/>
+          </div>
+          {(aFerment||aHumedad||aTiempoFerm)&&<div className="bg-red-50 border border-red-300 rounded-xl p-2 text-xs text-red-700 font-medium">⚠ PCC fuera de parámetro — documentar causa y acción correctiva abajo.</div>}
+        </div>
+      </div>
+    </div>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 6 — ABATIDOR  (P280 §9)
+        Trazabilidad: N° carro
+        PCC: T° seteo · T° salida (≤-12°C para habilitar envasado)
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-indigo-200 overflow-hidden">
+      <div className="bg-indigo-50 px-4 py-2 flex items-center justify-between">
+        <span className="text-xs font-bold text-indigo-700 uppercase tracking-wide">❄️ S6 — Abatidor</span>
+        <span className="text-[10px] text-indigo-400">P280 §9 · PCC</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3 bg-white">
+        <div className="text-[9px] text-indigo-400">{isMant?"Manteca: -24°C ±2°C · salida ≤-12°C · ~60 min · mín. 8 carros simples / 4 dobles":isGrasa?"Grasa: -16°C a -20°C · ~60 min":""}</div>
+        <Txt label="N° de carro abatidor" value={d.num_carro_abatidor} onChange={v=>sD(p=>({...p,num_carro_abatidor:v}))} ph="Trazabilidad — dato fijo"/>
+        <Num label="T° seteo abatidor (°C)" spec={isMant?"PCC — -24°C ±2°C":isGrasa?"PCC — -16°C a -20°C":""} value={d.t_abatidor} onChange={v=>sD(p=>({...p,t_abatidor:v}))} al={aAbat}/>
+        <Num label="Tiempo abatido (min)" spec="~60 min" value={d.tiempo_abatido} onChange={v=>sD(p=>({...p,tiempo_abatido:v}))}/>
+        {isMant&&<><Num label="T° salida abatidor (°C)" spec="PCC CRÍTICO — ≤-12°C para habilitar envasado" value={d.t_salida_abatidor} onChange={v=>sD(p=>({...p,t_salida_abatidor:v}))} al={aSalida}/>
+        {aSalida&&<div className="bg-red-50 border-2 border-red-400 rounded-xl p-2.5 text-xs text-red-800 font-bold">🛑 PCC CRÍTICO — No habilitar envasado. T° insuficiente. Continuar abatido y re-verificar.</div>}</>}
+        {aAbat&&!aSalida&&<div className="bg-red-50 border border-red-200 rounded-xl p-2 text-xs text-red-700">⚠ T° abatidor NC — verificar carga de carros y funcionamiento del equipo.</div>}
+      </div>
+    </div>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 7 — ENVASADO  (P280 §10)
+        PCC: T° medialunas al envasar ≤-12°C
+        PC: Bandejas completas · Etiqueta vigente
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-teal-200 overflow-hidden">
+      <div className="bg-teal-50 px-4 py-2 flex items-center justify-between">
+        <span className="text-xs font-bold text-teal-700 uppercase tracking-wide">📦 S7 — Envasado</span>
+        <span className="text-[10px] text-teal-400">P280 §10 · PCC</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3 bg-white">
+        <div className="text-[9px] text-teal-500">180 und/cajón (4 bandejas + 12 sueltas) · Rotular con fecha y tipo · Lote visible · Pallet de 32 cajones → cámara final</div>
+        <Num label="T° medialunas al envasar (°C)" spec="PCC — ≤-12°C para habilitar envasado" value={d.t_medialunas_envasar} onChange={v=>sD(p=>({...p,t_medialunas_envasar:v}))} al={aEnvasado}/>
+        {aEnvasado&&<div className="bg-red-50 border-2 border-red-400 rounded-xl p-2.5 text-xs text-red-800 font-bold">🛑 PCC — No envasar. T° fuera de límite. Devolver a abatidor.</div>}
+        <Chk label="✓ Bandejas completas (42 manteca · 36 grasa por bandeja)" value={d.bandejas_unidades_ok} onChange={v=>sD(p=>({...p,bandejas_unidades_ok:v}))}/>
+        <Chk label="✓ Etiqueta vigente con fecha, tipo y LOTE visible" value={d.etiqueta_vigente} onChange={v=>sD(p=>({...p,etiqueta_vigente:v}))}/>
+        <Num label="T° cámara final (°C)" spec="PCC — ≤-17°C" value={d.t_camara_final} onChange={v=>sD(p=>({...p,t_camara_final:v}))} al={d.t_camara_final!==""&&parseFloat(d.t_camara_final)>-17}/>
+        {d.t_camara_final!==""&&parseFloat(d.t_camara_final)>-17&&<div className="bg-red-50 border border-red-300 rounded-xl p-2 text-xs text-red-700 font-medium">⚠ PCC — Cámara final fuera de rango. Verificar equipo urgente.</div>}
+        <TA label="Obs. envasado" value={d.obs_envasado} onChange={v=>sD(p=>({...p,obs_envasado:v}))} ph="Novedades, cantidades, incidencias de envasado…"/>
+      </div>
+    </div>
+
+    {/* ══════════════════════════════════════════════════════════
+        SECTOR 8 — EVALUACIÓN SENSORIAL
+        Análisis organoléptico del producto terminado.
+    ══════════════════════════════════════════════════════════ */}
+    <div className="rounded-2xl border-2 border-purple-200 overflow-hidden">
+      <div className="bg-purple-50 px-4 py-2">
+        <span className="text-xs font-bold text-purple-700 uppercase tracking-wide">👅 S8 — Sensorial</span>
+      </div>
+      <div className="p-4 flex flex-col gap-2 bg-white">
+        <Chk label="✓ Color — dorado uniforme" value={d.color_ok} onChange={v=>sD(p=>({...p,color_ok:v}))}/>
+        <Chk label="✓ Forma — punta al centro hacia abajo, sin aperturas" value={d.forma_ok} onChange={v=>sD(p=>({...p,forma_ok:v}))}/>
+        <Chk label="✓ Textura / hojaldrado OK" value={d.textura_ok} onChange={v=>sD(p=>({...p,textura_ok:v}))}/>
+        <div className="mt-1"><TA label="Observaciones sensoriales" value={d.sensorial_obs} onChange={v=>sD(p=>({...p,sensorial_obs:v}))} ph="Desvíos de color, aroma, textura, apertura, presencia de cuerpos extraños…"/></div>
+      </div>
+    </div>
+
+    <Fotos fotos={d.fotos} onAdd={f=>sD(p=>({...p,fotos:[...p.fotos,f]}))} onRemove={id=>sD(p=>({...p,fotos:p.fotos.filter(f=>f.id!==id)}))}/>
+    <TA label="Observaciones generales / acciones correctivas" value={d.observaciones} onChange={v=>sD(p=>({...p,observaciones:v}))}/>
+  </>}/>;
+}
 
     {/* ── SECTOR 1: AMASADO ─────────────────────────────────── */}
     <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3">
