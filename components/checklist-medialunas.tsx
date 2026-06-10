@@ -22,61 +22,45 @@ interface Usuario{nombre:string;rol:Rol;turno:Turno;}
 interface FotoMeta{id:string;nombre:string;sector:string;timestamp:string;w:number;h:number;}
 interface Base{id:string;tipo:Tipo;turno:Turno;responsable:string;fecha:string;hora:string;timestamp:string;alertas:Record<string,boolean>;fotos:FotoMeta[];}
 
-// Temperaturas — Medialunas
-interface RTempML extends Base{tipo:"temperaturas";area:"medialunas";
-  t_camara_masas:string;t_ambiente:string;t_camara_pt:string;
-  agua_chiller_kg:string;hielo_kg:string;t_agua_chiller:string;
-  tiempo_amasado:string;num_carro:string;hora_ingreso_camara:string;fecha_ingreso_camara:string;
-  // Laminado manual
-  num_carro_laminado:string;hora_salida_camara:string;fecha_salida_camara:string;horas_reposo:number;
-  hojaldre_ok:boolean;
-  // Laminado automático
-  calibre_inicio:string;calibre_fin:string;ancho_cm:string;
-  // Medialunera
-  calibre_medialunera:string;maquinista_12mil:string;maquinista_lam_auto:string;
-  // Fermentador
-  t_fermentador:string;tiempo_fermentado:string;
-  equipo_num:string;observaciones:string;}
-
-// Temperaturas — Panificados
-interface RTempPan extends Base{tipo:"temperaturas";area:"panificados";
+// Temperaturas — registro de cámaras (único por turno, no duplica datos de proceso)
+interface RTempML extends Base{tipo:"temperaturas";area:"medialunas"|"panificados"|"general";
   t_camara_masas:string;t_ambiente:string;t_camara_pt:string;
   equipo_num:string;observaciones:string;}
 
-type RTemp=RTempML|RTempPan;
+// alias para compatibilidad
+type RTempPan=RTempML;
+type RTemp=RTempML;
 
 // Medialunas (pesos) — integrado en módulo medialunas
 interface RMedialunas extends Base{tipo:"medialunas";
   variedad:"manteca"|"grasa"|"";lote_harina:string;
-  maquinista_12mil:string;maquinista_lam_auto:string;
-  // Amasado
-  agua_chiller_kg:string;hielo_kg:string;t_agua_chiller:string;tiempo_amasado:string;
-  // Ingreso cámara
+  maquinista_12mil:string;maquinista_lam_auto:string;maquinista_manual:string;
+  // S0 — Fraccionado
+  agua_chiller_kg:string;hielo_kg:string;t_agua_chiller:string;
+  // S1 — Amasado
+  tiempo_amasado:string;t_masa_salida:string;peso_baston:string;
   num_carro:string;fecha_ingreso_camara:string;hora_ingreso_camara:string;
-  // Laminado manual
+  pct_recupero:string;
+  // S2 — Laminado manual
   num_carro_laminado:string;fecha_salida_camara:string;hora_salida_camara:string;hojaldre_ok:boolean;
-  // Laminado automático
+  calibre_inicio_manual:string;calibre_fin_manual:string;vueltas_manual:string;
+  // S3 — Laminado automático
   calibre_inicio:string;calibre_fin:string;ancho_cm:string;
-  // Medialunera
+  // S4 — Medialunera + Pesos
   calibre_medialunera:string;
-  // 15 muestras: 5 inicio, 5 medio, 5 fin
   muestras_inicio:string[];muestras_medio:string[];muestras_fin:string[];
   prom_inicio:number;prom_medio:number;prom_fin:number;prom_total:number;desvio_pct:number;
   ajustado:string;
-  // Fermentador
+  // S5 — Fermentador
   t_fermentador:string;humedad_fermentador:string;tiempo_fermentado:string;
   num_carro_fermentador:string;hora_ingreso_fermentador:string;hora_salida_fermentador:string;
-  // Abatidor
-  t_abatidor:string;t_salida_abatidor:string;tiempo_abatido:string;
-  num_carro_abatidor:string;  // conecta con fermentador
-  // Envasado
-  bandejas_unidades_ok:boolean;etiqueta_vigente:boolean;t_medialunas_envasar:string;obs_envasado:string;
-  // Cámara final
-  t_camara_final:string;
-  // Sensorial
+  // S6 — Abatidor
+  t_abatidor:string;t_salida_abatidor:string;tiempo_abatido:string;num_carro_abatidor:string;
+  // S7 — Envasado
+  bandejas_unidades_ok:boolean;etiqueta_vigente:boolean;t_medialunas_envasar:string;t_camara_final:string;obs_envasado:string;
+  // S8 — Sensorial
   color_ok:boolean;forma_ok:boolean;textura_ok:boolean;sensorial_obs:string;
-  // Recupero
-  pct_recupero:string;observaciones:string;}
+  observaciones:string;}
 
 // BPM — por incumplimiento
 interface RBPM extends Base{tipo:"bpm";
@@ -291,7 +275,7 @@ function buildTxt(rs:Reg[],titulo:string,notas:Record<string,string>,elim:Set<st
   t+=`\n${"─".repeat(46)}\nDETALLE POR TURNO\n`;
   for(const tr of TURNOS){const trs=vis.filter(r=>r.turno===tr.id);if(!trs.length)continue;t+=`\nTURNO ${tr.label.toUpperCase()}\n`;for(const r of trs){const m=MODS.find(x=>x.id===r.tipo);t+=`  [${r.hora}] ${m?.icon} ${m?.label}${cAl(r.alertas)>0?" ⚠":""} · ${r.responsable}\n`;
     if(r.tipo==="temperaturas"){const rt=r as RTemp;t+=`    Área: ${(rt as RTempML).area} | Cám.masas: ${(rt as RTempML).t_camara_masas}°C | Amb: ${(rt as RTempML).t_ambiente}°C | Cám.PT: ${(rt as RTempML).t_camara_pt}°C\n`;}
-    if(r.tipo==="medialunas"){const ml=r as RMedialunas;t+=`    ${ml.variedad} | Prom: ${ml.prom_total}g | Ferment: ${ml.t_fermentador}°C | Abat: ${ml.t_abatido}°C | Cám.final: ${ml.t_camara_final}°C | Recupero: ${ml.pct_recupero}%\n`;}
+    if(r.tipo==="medialunas"){const ml=r as RMedialunas;t+=`    ${ml.variedad} | Prom: ${ml.prom_total}g | Ferment: ${ml.t_fermentador}°C | Abat: ${ml.t_abatidor}°C | Cám.final: ${ml.t_camara_final}°C | Recupero: ${ml.pct_recupero}%\n`;}
     if(r.tipo==="bpm"){const b=r as RBPM;t+=`    Operario: ${b.operario} | Sector: ${b.sector}\n    Incumplimientos: ${b.incumplimientos.join(", ")}\n    Acción: ${b.accion_tomada}\n`;}
     if(r.tipo==="recepcion"){const rc=r as RRecep;t+=`    ${rc.proveedor_nombre} — ${rc.producto} | T°: ${rc.t_ingreso}°C | ${rc.resultado}\n`;}
     if(r.tipo==="despacho"){const dp=r as RDesp;t+=`    ${dp.local_destino} — ${dp.producto} | T°: ${dp.t_despacho}°C | Chofer: ${dp.chofer} | Pat: ${dp.patente}\n`;}
@@ -338,7 +322,7 @@ function FTemp({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCancel:()=>
   const aCamaraPT=d.t_camara_pt!==""&&(parseFloat(d.t_camara_pt)<-25||parseFloat(d.t_camara_pt)>-17);
 
   async function sv(){sG(true);
-    onSave({id:gid("tmp"),tipo:"temperaturas",area:"general",turno:u.turno,responsable:u.nombre,fecha:hoy(),hora:ahora(),timestamp:new Date().toISOString(),
+    onSave({id:gid("tmp"),tipo:"temperaturas",area:"panificados",turno:u.turno,responsable:u.nombre,fecha:hoy(),hora:ahora(),timestamp:new Date().toISOString(),
       alertas:{t_camara_masas_nc:aCamaraMasas,t_ambiente_nc:aAmbiente,t_camara_pt_nc:aCamaraPT},
       ...d} as unknown as Reg);
     sG(false);}
@@ -565,7 +549,7 @@ function FMedialunas({u,onSave,onCancel}:{u:Usuario;onSave:(r:Reg)=>void;onCance
         <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 flex flex-col gap-2">
           <div className="text-[10px] font-bold text-red-700 uppercase tracking-wide">🔴 PCC — Corte de hojaldre</div>
           <div className="text-[10px] text-red-500">Verificar hojaldre visible en el corte. Si no cumple: NO continuar proceso.</div>
-          <button onClick={()=>sD(p=>({...p,hojaldre_ok:!p.hojaldre_ok}))} className={cn("h-13 py-3 rounded-xl border-2 text-sm font-bold",d.hojaldre_ok?"border-green-400 bg-green-50 text-green-700":"border-red-400 bg-red-100 text-red-700")}>
+          <button onClick={()=>sD(p=>({...p,hojaldre_ok:!p.hojaldre_ok}))} className={cn("h-12 py-3 rounded-xl border-2 text-sm font-bold",d.hojaldre_ok?"border-green-400 bg-green-50 text-green-700":"border-red-400 bg-red-100 text-red-700")}>
             {d.hojaldre_ok?"✓ CUMPLE — Hojaldre visible en corte":"✕ NO CUMPLE — Hojaldre no visible"}
           </button>
           {aHojaldre&&<div className="bg-red-100 border border-red-400 rounded-xl p-2 text-xs text-red-800 font-bold">🛑 PCC CRÍTICO — Detener proceso. Generar NC inmediatamente.</div>}
